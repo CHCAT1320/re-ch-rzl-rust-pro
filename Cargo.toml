@@ -1,0 +1,13 @@
+[package]
+name = "re-ch-rzl-rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+macroquad = "0.4.15"
+sasa = { git = "https://github.com/Mivik/sasa.git" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+simd-json = "0.13"
+rfd = "0.15"
+hound = "3.5"
