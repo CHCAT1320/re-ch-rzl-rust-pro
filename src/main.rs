@@ -303,30 +303,50 @@ fn find_riz_time_theme(chart: &Chart, time: f64) -> Theme {
     default
 }
 
-// 查找 note 在当前 time 下应使用的主题颜色（colors_list[1]）。
-// 处于挑战时间区间（含进入/退出过渡）时返回对应主题，否则使用默认主题 themes[0]。
-fn find_active_note_color(chart: &Chart, time: f64) -> chart::Color {
-    if chart.themes.is_empty() || chart.themes[0].colors_list.len() < 2 {
-        return chart::Color { r: 255, g: 255, b: 255, a: 255 };
-    }
-    let default = chart.themes[0].colors_list[1];
+fn theme_color(theme: &Theme, color_index: usize, fallback: chart::Color) -> chart::Color {
+    theme.colors_list.get(color_index).copied().unwrap_or(fallback)
+}
+
+fn default_note_color() -> chart::Color {
+    chart::Color { r: 255, g: 255, b: 255, a: 255 }
+}
+
+// 返回参考实现中的 lastThemeIndex：只有挑战完全激活时才切换全局主题。
+// 进入/退出阶段由 draw_challenge_time 的遮罩负责，不应让所有 note 瞬间变色。
+fn find_active_challenge_theme_index(chart: &Chart, time: f64) -> Option<usize> {
+    let mut active = None;
     for (idx, ct) in chart.challenge_times.iter().enumerate() {
         let start_secs = chart.tick_to_seconds(ct.start);
         let end_secs = chart.tick_to_seconds(ct.end);
-        if time >= start_secs && time <= end_secs + ct.trans_time {
-            let theme_idx = (idx + 1).min(chart.themes.len() - 1);
-            if chart.themes[theme_idx].colors_list.len() >= 2 {
-                return chart.themes[theme_idx].colors_list[1];
-            }
+        let trans_start_secs = start_secs + ct.trans_time;
+        if time > trans_start_secs && time <= end_secs && idx + 1 < chart.themes.len() {
+            active = Some(idx + 1);
         }
     }
-    default
+    active
+}
+
+// 查找当前全局 note 颜色。颜色按播放时间对应的主题获取，而不是按 note.time 获取。
+fn find_active_note_color(chart: &Chart, time: f64) -> chart::Color {
+    let fallback = default_note_color();
+    let Some(default_theme) = chart.themes.first() else {
+        return fallback;
+    };
+    let theme = find_active_challenge_theme_index(chart, time)
+        .and_then(|idx| chart.themes.get(idx))
+        .unwrap_or(default_theme);
+    theme_color(theme, 1, theme_color(default_theme, 1, fallback))
 }
 
 fn draw_background(chart: &Chart) {
     let screen_width = render_w();
     let screen_height = render_h();
-    let color = [chart.themes[0].colors_list[0].r, chart.themes[0].colors_list[0].g, chart.themes[0].colors_list[0].b, 255];
+    let bg = chart
+        .themes
+        .first()
+        .map(|theme| theme_color(theme, 0, chart::Color { r: 0, g: 0, b: 0, a: 255 }))
+        .unwrap_or(chart::Color { r: 0, g: 0, b: 0, a: 255 });
+    let color = [bg.r, bg.g, bg.b, 255];
     draw_rectangle(0.0, 0.0, screen_width as f32, screen_height as f32, color.into());
 }
 
@@ -811,13 +831,13 @@ fn draw_challenge_time(chart: &Chart, time: f64) {
     let max_radius = sh * 15.0;
 
     for (idx, ct) in chart.challenge_times.iter().enumerate() {
-        // 主题索引：第一个 challengeTime 用 themes[1]，依此类推
-        let theme_idx = (idx + 1).min(chart.themes.len().saturating_sub(1));
-        if chart.themes.is_empty() {
-            break;
-        }
-        let theme = &chart.themes[theme_idx];
-        let bg = chart_color_to_macroquad(&theme.colors_list[0]);
+        // 主题索引：第一个 challengeTime 用 themes[1]，依此类推。
+        // 缺失对应主题时跳过该 challenge，不复用最后一个主题。
+        let Some(theme) = chart.themes.get(idx + 1) else {
+            continue;
+        };
+        let default_bg = chart::Color { r: 0, g: 0, b: 0, a: 255 };
+        let bg = chart_color_to_macroquad(&theme_color(theme, 0, default_bg));
 
         let start_secs = chart.tick_to_seconds(ct.start);
         let end_secs = chart.tick_to_seconds(ct.end);
@@ -883,19 +903,9 @@ impl HitEffect {
     }
 }
 
-// 当前时间所在挑战时间主题索引；不在挑战时间内返回 None
+// 当前完整激活的挑战主题索引；进入/退出过渡不切换打击特效颜色。
 fn find_hit_theme_index(chart: &Chart, time: f64) -> Option<usize> {
-    if chart.themes.is_empty() {
-        return None;
-    }
-    for (idx, ct) in chart.challenge_times.iter().enumerate() {
-        let start_secs = chart.tick_to_seconds(ct.start);
-        let end_secs = chart.tick_to_seconds(ct.end);
-        if time >= start_secs && time <= end_secs + ct.trans_time {
-            return Some((idx + 1).min(chart.themes.len() - 1));
-        }
-    }
-    None
+    find_active_challenge_theme_index(chart, time)
 }
 
 // 生成打击特效（在 is_hited 更新前调用，避免可变借用冲突）
@@ -904,17 +914,17 @@ fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
     let camera_x = camera_pos[0];
     let camera_scale = camera_pos[1];
     let theme_idx = find_hit_theme_index(chart, time);
-    let color = if let Some(idx) = theme_idx {
-        if chart.themes[idx].colors_list.len() >= 3 {
-            chart.themes[idx].colors_list[2]
-        } else {
-            chart::Color { r: 255, g: 255, b: 255, a: 255 }
-        }
-    } else if !chart.themes.is_empty() && chart.themes[0].colors_list.len() >= 3 {
-        chart.themes[0].colors_list[2]
-    } else {
-        chart::Color { r: 255, g: 255, b: 255, a: 255 }
-    };
+    let fallback = chart::Color { r: 255, g: 255, b: 255, a: 255 };
+    let default_theme = chart.themes.first();
+    let color = theme_idx
+        .and_then(|idx| chart.themes.get(idx))
+        .or(default_theme)
+        .map(|theme| {
+            default_theme
+                .map(|default| theme_color(theme, 2, theme_color(default, 2, fallback)))
+                .unwrap_or(fallback)
+        })
+        .unwrap_or(fallback);
     for line in &chart.lines {
         for note in &line.notes {
             let note_time = chart.tick_to_seconds(note.time);
