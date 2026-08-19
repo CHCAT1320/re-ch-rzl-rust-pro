@@ -1,4 +1,6 @@
-﻿mod chart;
+﻿#![windows_subsystem = "console"]
+
+mod chart;
 mod ease;
 
 use macroquad::prelude::*;
@@ -11,6 +13,8 @@ use std::f64::consts::PI;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 use crate::chart::{Theme, tick_to_seconds_impl};
@@ -25,7 +29,7 @@ pub static NvOptimusEnablement: u32 = 1;
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
 
 const SPEED: f64 = 7.0;
-const REVELATION_SIZE: f64 = 0.3;
+const REVELATION_SIZE: f64 = 1.0;
 
 thread_local! {
     static RENDER_WIDTH: Cell<f32> = Cell::new(0.0);
@@ -268,8 +272,20 @@ fn sort_chart(chart: &mut Chart) {
         line.line_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
         line.notes.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
     }
-    // 线之间按首点时间排序
-    chart.lines.sort_by(|a, b| a.line_points[0].time.partial_cmp(&b.line_points[0].time).unwrap());
+    // 空 line 没有首点，放到末尾，避免不完整谱面在加载阶段崩溃
+    chart.lines.sort_by(|a, b| {
+        a.line_points
+            .first()
+            .map(|point| point.time)
+            .unwrap_or(f64::INFINITY)
+            .partial_cmp(
+                &b.line_points
+                    .first()
+                    .map(|point| point.time)
+                    .unwrap_or(f64::INFINITY),
+            )
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 #[allow(dead_code)]
@@ -537,6 +553,11 @@ fn find_line_segment(line_points: &[chart::LinePoint], secs: f64, chart: &Chart)
 }
 
 
+// 画布序号字号量化成 8 的倍数：预缓存精确覆盖实际字号，录制中不会新增字形导致字体图集膨胀（黑框框）
+fn quantize_font_size(x: f64) -> f64 {
+    ((x / 8.0).round() * 8.0).clamp(8.0, 256.0)
+}
+
 fn update_canvases_text(chart: &Chart, time: f64) {
     if REVELATION_SIZE >= 1.0 {
         return;
@@ -544,8 +565,8 @@ fn update_canvases_text(chart: &Chart, time: f64) {
     let camera_pos = find_canmera_move(chart, time);
     let camera_x = camera_pos[0];
     let scale = camera_pos[1];
-    // 字号取整，便于预缓存字形（仍是随 camera scale 变化的整数级字号）
-    let font_size = (70.0 * scale * scale_x()).round();
+    // 字号按 8 的倍数量化，与预缓存集合一致
+    let font_size = quantize_font_size(70.0 * scale * scale_x());
     for i in 0..chart.canvas_moves.len() {
         let canvas_pos = find_canvas_move(chart, time, i as i32);
         let x = (canvas_pos[0] + camera_x) * 720.0 * scale * scale_x() + center_x();
@@ -654,7 +675,7 @@ fn draw_lines(chart: &Chart, time: f64) {
             let x = (point.x_position + cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
             let y = (-(point.floor_position - cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y();
             if REVELATION_SIZE < 1.0 {
-                draw_circle(x as f32, y as f32, 3.0, BLACK);
+                draw_circle(x as f32, y as f32, 4.0, BLACK);
             }
             let result_color = match line_color {
                 Some(lc) => mix_color(&point.color, &lc),
@@ -1318,21 +1339,6 @@ fn draw_render_progress(frame: u64, enc_frame: u64, total: u64, submit_speed: f6
     }
 }
 
-fn read_ffmpeg_progress(path: &Path) -> (u64, f64) {
-    let mut frame = 0u64;
-    let mut fps = 0.0;
-    if let Ok(content) = std::fs::read_to_string(path) {
-        for line in content.lines() {
-            if let Some(v) = line.strip_prefix("frame=") {
-                frame = v.trim().parse().unwrap_or(frame);
-            } else if let Some(v) = line.strip_prefix("fps=") {
-                fps = v.trim().parse().unwrap_or(fps);
-            }
-        }
-    }
-    (frame, fps)
-}
-
 fn detect_hw_encoder(ffmpeg: &Path) -> Option<&'static str> {
     let out = Command::new(ffmpeg).arg("-encoders").output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
@@ -1389,7 +1395,7 @@ async fn render_video(
         let dim = measure_text(progress_text, None, 22, 1.0);
         draw_text(progress_text, -dim.width - 10.0, -dim.height - 10.0, 22.0, Color::from_rgba(0, 0, 0, 0));
     }
-    // 2) cvs 序号数字：按 camera scale 范围算出整数字号区间，全字号缓存
+    // 2) cvs 序号数字：按 camera scale 范围量化字号（8 的倍数），只预缓存实际会用到的字号
     {
         let mut min_scale = f64::INFINITY;
         let mut max_scale = f64::NEG_INFINITY;
@@ -1397,17 +1403,17 @@ async fn render_video(
             min_scale = min_scale.min(kp.value);
             max_scale = max_scale.max(kp.value);
         }
-        let min_font = ((70.0 * min_scale * scale_x()).round() as i64).clamp(8, 256);
-        let max_font = ((70.0 * max_scale * scale_x()).round() as i64).clamp(8, 256);
+        let min_font = if min_scale.is_finite() { quantize_font_size(70.0 * min_scale * scale_x()) as i64 } else { 8 };
+        let max_font = if max_scale.is_finite() { quantize_font_size(70.0 * max_scale * scale_x()) as i64 } else { 8 };
         let y_dummy = -1000.0;
-        for size in (min_font..=max_font).chain([27, 36, 90].into_iter()) {
+        for size in (min_font..=max_font).step_by(8).chain([27, 36, 60, 90].into_iter()) {
             let size = size as f64;
             let dim = measure_text("0123456789", None, size as u16, 1.0);
             draw_text("0123456789", -dim.width - 10.0, y_dummy, size as f32, Color::from_rgba(0, 0, 0, 0));
         }
         // 3) 水印/信息文本的 ASCII 在固定字号缓存
         let ascii: String = (32..127).map(|c| c as u8 as char).collect();
-        for size in [27, 36, 90] {
+        for size in [27, 36, 60, 90] {
             let dim = measure_text(&ascii, None, size as u16, 1.0);
             draw_text(&ascii, -dim.width - 10.0, y_dummy, size as f32, Color::from_rgba(0, 0, 0, 0));
         }
@@ -1416,10 +1422,6 @@ async fn render_video(
 
     let w = out_w;
     let h = out_h;
-    let progress_file = "ffmpeg_progress.txt";
-    let _ = std::fs::remove_file(progress_file);
-    let log_file = "ffmpeg_log.txt";
-    let _ = std::fs::remove_file(log_file);
     let output = "output.mp4";
 
     // 根据编码器追加质量/速度参数，色彩丰富的画面不易糊
@@ -1460,10 +1462,10 @@ async fn render_video(
         .args(["-i", mixed_path.to_str().unwrap()])
         .args(["-c:v", encoder, "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
         .args(&enc_args)
-        .args(["-progress", progress_file])
+        .args(["-stats_period", "0.2", "-progress", "pipe:2"])
         .arg(output)
         .stdin(Stdio::piped())
-        .stderr(Stdio::from(std::fs::File::create(log_file).unwrap()))
+        .stderr(Stdio::piped())
         .spawn()
     {
         Ok(c) => c,
@@ -1473,6 +1475,48 @@ async fn render_video(
         }
     };
     let mut stdin = child.stdin.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    // 后台线程读取 ffmpeg 进度和日志：进度用于进度条，日志输出到控制台（不再写 txt）
+    let enc_state: Arc<Mutex<(u64, f64)>> = Arc::new(Mutex::new((0, 0.0)));
+    let state = enc_state.clone();
+    thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stderr);
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            if let Some(v) = line.strip_prefix("frame=") {
+                if let Ok(f) = v.trim().parse::<u64>() {
+                    let mut progress = state.lock().unwrap();
+                    progress.0 = progress.0.max(f);
+                }
+            } else if let Some(v) = line.strip_prefix("fps=") {
+                if let Ok(f) = v.trim().parse::<f64>() {
+                    state.lock().unwrap().1 = f;
+                }
+            } else if let Some(v) = line.strip_prefix("out_time_us=") {
+                if let Ok(us) = v.trim().parse::<u64>() {
+                    let encoded_frames = (us as f64 * fps as f64 / 1_000_000.0).round() as u64;
+                    let mut progress = state.lock().unwrap();
+                    progress.0 = progress.0.max(encoded_frames);
+                }
+            } else if line == "progress=continue" || line == "progress=end" {
+                let progress = state.lock().unwrap();
+                eprintln!("ffmpeg 进度: 已处理 {} 帧，{:.1} fps", progress.0, progress.1);
+            } else {
+                // 过滤 -progress 输出的单值 key=value 行，其余 ffmpeg 日志打到控制台
+                let mut it = line.splitn(2, '=');
+                let key = it.next().unwrap_or("");
+                let val = it.next();
+                let is_progress_line = val
+                    .map(|v| !v.trim().contains(' ') && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(false);
+                if !is_progress_line {
+                    eprintln!("{line}");
+                }
+            }
+        }
+    });
 
     let target = render_target_msaa(w, h);
     let camera = Camera2D {
@@ -1481,6 +1525,7 @@ async fn render_video(
     };
 
     let total_frames = (duration * fps as f64).ceil().max(1.0) as u64;
+    eprintln!("开始渲染: {w}x{h}@{fps}fps，共 {total_frames} 帧，编码器 {encoder}");
     let start = Instant::now();
     let dt = 1.0 / fps as f64;
     let mut frame: u64 = 0;
@@ -1512,7 +1557,10 @@ async fn render_video(
 
         // 每 BATCH 帧更新一次窗口进度，避免每帧等 vsync
         if frame % BATCH == 0 || frame >= total_frames {
-            let (enc_frame, enc_speed) = read_ffmpeg_progress(Path::new(progress_file));
+            let (enc_frame, enc_speed) = {
+                let s = enc_state.lock().unwrap();
+                (s.0, s.1)
+            };
             let elapsed = start.elapsed().as_secs_f64();
             let submit_speed = frame as f64 / elapsed.max(1e-9);
             let eta = if submit_speed > 0.0 {
@@ -1526,12 +1574,43 @@ async fn render_video(
     }
 
     drop(stdin);
-    let _ = child.wait();
+
+    // 等待 ffmpeg 编码完成，期间保持窗口响应
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                clear_background(BLACK);
+                let done_text = "正在合成视频... 完成后请点击窗口关闭按钮退出";
+                let dim = measure_text(done_text, None, 24, 1.0);
+                draw_text(done_text, (screen_width() - dim.width) / 2.0, screen_height() / 2.0, 24.0, WHITE);
+                next_frame().await;
+                if is_quit_requested() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+            }
+            Err(_) => break std::process::ExitStatus::default(),
+        }
+    };
+    eprintln!("渲染完成: {frame} 帧，耗时 {:.1}s ({status})", start.elapsed().as_secs_f64());
     let _ = std::fs::remove_file(&mixed_path);
-    let _ = std::fs::remove_file(progress_file);
     RENDER_WIDTH.with(|c| c.set(0.0));
     RENDER_HEIGHT.with(|c| c.set(0.0));
     hits.clear();
+
+    // 帧已全部交给 ffmpeg：保持窗口，直到用户点击窗口关闭按钮才退出
+    loop {
+        clear_background(BLACK);
+        let done_text = "渲染完成，点击窗口关闭按钮退出";
+        let dim = measure_text(done_text, None, 28, 1.0);
+        draw_text(done_text, (screen_width() - dim.width) / 2.0, screen_height() / 2.0, 28.0, WHITE);
+        next_frame().await;
+        if is_quit_requested() {
+            break;
+        }
+    }
 }
 
 #[macroquad::main(window_conf)]
@@ -1620,8 +1699,20 @@ async fn main() {
     let mut music = manager.create_music(clip, params).unwrap();
     let font = load_ttf_font("./assets/fonts/rizline.ttf").await.unwrap();
     set_default_font(font);
-    let mut json_data = std::fs::read(&json_path).unwrap();
-    let mut chart: Chart = simd_json::serde::from_slice(&mut json_data).unwrap();
+    let mut json_data = match std::fs::read(&json_path) {
+        Ok(data) => data,
+        Err(error) => {
+            eprintln!("无法读取谱面 {}: {error}", json_path.display());
+            return;
+        }
+    };
+    let mut chart: Chart = match simd_json::serde::from_slice(&mut json_data) {
+        Ok(chart) => chart,
+        Err(error) => {
+            eprintln!("谱面格式错误 {}: {error}", json_path.display());
+            return;
+        }
+    };
     sort_chart(&mut chart);
     recalculate_all_fp(&mut chart);
 

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +32,8 @@ impl Chart {
         for i in 1..self.bpm_shifts.len() {
             let curr = &self.bpm_shifts[i];
             if seconds <= curr.floor_position {
-                let ratio = (seconds - prev.floor_position) / (curr.floor_position - prev.floor_position);
+                let ratio =
+                    (seconds - prev.floor_position) / (curr.floor_position - prev.floor_position);
                 return prev.time + ratio * (curr.time - prev.time);
             }
             prev = curr;
@@ -83,10 +84,49 @@ pub struct Theme {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Color {
+    #[serde(default, deserialize_with = "deserialize_color_channel")]
     pub r: u8,
+    #[serde(default, deserialize_with = "deserialize_color_channel")]
     pub g: u8,
+    #[serde(default, deserialize_with = "deserialize_color_channel")]
     pub b: u8,
+    #[serde(default = "opaque", deserialize_with = "deserialize_alpha_channel")]
     pub a: u8,
+}
+
+fn opaque() -> u8 {
+    255
+}
+
+fn deserialize_color_channel<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_channel(deserializer, 0)
+}
+
+fn deserialize_alpha_channel<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_channel(deserializer, 255)
+}
+
+fn deserialize_channel<'de, D>(deserializer: D, default: u8) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let number = match value {
+        Some(serde_json::Value::Number(value)) => value.as_f64(),
+        Some(serde_json::Value::String(value)) => value.trim().parse::<f64>().ok(),
+        _ => None,
+    };
+
+    Ok(number
+        .filter(|value| value.is_finite())
+        .map(|value| value.round().clamp(0.0, 255.0) as u8)
+        .unwrap_or(default))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +189,8 @@ pub struct ColorPoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CanvasMove {
+    // Some exported charts omit this metadata; rendering uses the array position.
+    #[serde(default)]
     pub index: i32,
     pub x_position_key_points: Vec<KeyPoint>,
     pub speed_key_points: Vec<KeyPoint>,
@@ -168,4 +210,32 @@ pub struct KeyPoint {
     pub value: f64,
     pub ease_type: i32,
     pub floor_position: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CanvasMove, Color};
+
+    #[test]
+    fn color_channels_accept_and_normalize_loose_values() {
+        let color: Color =
+            serde_json::from_str(r#"{"r":-10,"g":300,"b":127.6,"a":"128"}"#).unwrap();
+
+        assert_eq!((color.r, color.g, color.b, color.a), (0, 255, 128, 128));
+    }
+
+    #[test]
+    fn color_channels_use_safe_defaults() {
+        let color: Color = serde_json::from_str(r#"{"r":null,"g":"bad"}"#).unwrap();
+
+        assert_eq!((color.r, color.g, color.b, color.a), (0, 0, 0, 255));
+    }
+
+    #[test]
+    fn canvas_index_defaults_when_exporter_omits_it() {
+        let canvas: CanvasMove =
+            serde_json::from_str(r#"{"xPositionKeyPoints":[],"speedKeyPoints":[]}"#).unwrap();
+
+        assert_eq!(canvas.index, 0);
+    }
 }
