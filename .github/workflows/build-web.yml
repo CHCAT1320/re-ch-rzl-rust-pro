@@ -1,0 +1,45 @@
+name: Build Web
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build wasm
+        run: cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
+
+      - name: Package web
+        run: |
+          python3 .github/scripts/build_web.py \
+            --wasm target/wasm32-unknown-unknown/release/re-ch-rzl-rust.wasm \
+            --out dist/web
+
+      - name: Upload multifile
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-multifile
+          path: dist/web/multifile/
+          if-no-files-found: error
+
+      - name: Upload single html
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-single
+          path: dist/web/single/re-ch-rzl-rust.html
+          if-no-files-found: error

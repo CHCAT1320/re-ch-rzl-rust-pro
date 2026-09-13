@@ -52,7 +52,7 @@ python -m http.server 8123 --directory dist/web/multifile
 
 Web 版需要 **WebGL2**：挑战过渡用离屏 RenderTarget 合成，miniquad 的 MSAA resolve 依赖 `glReadBuffer` 和 `READ/DRAW_FRAMEBUFFER`，这些在 WebGL1 下不存在。`window_conf()` 已显式请求 WebGL2。
 
-GitHub Actions 的 `web` job 会构建并上传 `re-ch-rzl-rust-web-multifile` 和 `re-ch-rzl-rust-web-single` 两个产物。
+GitHub Actions 的 `Build Web` 工作流会构建并上传 `re-ch-rzl-rust-web-multifile` 和 `re-ch-rzl-rust-web-single` 两个产物。
 
 ## 构建
 
@@ -60,7 +60,17 @@ GitHub Actions 的 `web` job 会构建并上传 `re-ch-rzl-rust-web-multifile` �
 cargo build --release
 ```
 
-GitHub Actions 会在 `master` 上自动编译 Windows exe 和 macOS 二进制，并生成提交差异图。
+构建按平台拆成可复用工作流，由 `build.yml` 统一编排：
+
+```text
+build-windows.yml   Windows exe
+build-macos.yml     macOS 通用二进制
+build-linux.yml     Linux x86_64
+build-web.yml       web 多文件版 + 单文件版
+build.yml           调用上面 4 个，并汇总成一个 release 草稿
+```
+
+每个平台工作流也支持单独 `workflow_dispatch`。另外 `commit-diff-image.yml` 负责生成提交差异图。
 
 ## 发布
 

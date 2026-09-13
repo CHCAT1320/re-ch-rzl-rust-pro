@@ -1,0 +1,40 @@
+name: Build macOS
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build universal binary
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create \
+            target/aarch64-apple-darwin/release/re-ch-rzl-rust \
+            target/x86_64-apple-darwin/release/re-ch-rzl-rust \
+            -output out/re-ch-rzl-rust
+          lipo -archs out/re-ch-rzl-rust
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-macos
+          path: out/re-ch-rzl-rust
+          if-no-files-found: error
