@@ -3,6 +3,9 @@ name = "re-ch-rzl-rust"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release]
+strip = true
+
 [dependencies]
 macroquad = "0.4.15"
 sasa = { git = "https://github.com/Mivik/sasa.git" }

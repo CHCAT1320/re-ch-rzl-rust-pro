@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [master]
+    tags: ['v*']
     paths-ignore:
       - 'diff/**'
       - 'README.md'
@@ -43,3 +44,76 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
           if-no-files-found: error
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build wasm
+        run: cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
+
+      - name: Package web
+        run: |
+          python3 .github/scripts/build_web.py \
+            --wasm target/wasm32-unknown-unknown/release/re-ch-rzl-rust.wasm \
+            --out dist/web
+
+      - name: Upload multifile
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-multifile
+          path: dist/web/multifile/
+          if-no-files-found: error
+
+      - name: Upload single html
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-single
+          path: dist/web/single/re-ch-rzl-rust.html
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: dist
+
+      - name: Package assets
+        run: |
+          cd dist/re-ch-rzl-rust-web-multifile
+          zip -r ../re-ch-rzl-rust-web-multifile.zip .
+          cd ../..
+          cp dist/re-ch-rzl-rust-web-single/re-ch-rzl-rust.html dist/re-ch-rzl-rust-web-single.html
+          ls -R dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          assets=(
+            dist/re-ch-rzl-rust-windows/re-ch-rzl-rust.exe
+            dist/re-ch-rzl-rust-macos/re-ch-rzl-rust
+            dist/re-ch-rzl-rust-web-multifile.zip
+            dist/re-ch-rzl-rust-web-single.html
+          )
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            gh release create "$tag" --title "$tag" --generate-notes "${assets[@]}"
+          fi

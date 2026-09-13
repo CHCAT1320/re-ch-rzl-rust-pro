@@ -2,6 +2,8 @@
 
 mod chart;
 mod ease;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 use macroquad::prelude::*;
 use chart::Chart;
@@ -1150,12 +1152,14 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
 const TAP_HIT_DATA: &[u8] = include_bytes!("../assets/audio/hit.wav");
 const DRAG_HIT_DATA: &[u8] = include_bytes!("../assets/audio/drag.wav");
 
+#[cfg(not(target_arch = "wasm32"))]
 struct HitSounds {
     _manager: AudioManager,
     tap: Sfx,
     drag: Sfx,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl HitSounds {
     fn new() -> Self {
         let backend = CpalBackend::new(CpalSettings {
@@ -1184,11 +1188,17 @@ impl HitSounds {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static HIT_SOUNDS: RefCell<HitSounds> = RefCell::new(HitSounds::new());
 }
 
 fn play_hit_sound(note_type: i32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web::play_hit_sound(note_type);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     HIT_SOUNDS.with(|cell| {
         let mut sounds = cell.borrow_mut();
     let sfx: &mut Sfx = match note_type {
@@ -1806,8 +1816,28 @@ async fn render_video(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_file(title: &str, ext: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter(ext, &[ext])
+        .set_title(title)
+        .pick_file()
+}
+
+// rfd gates FileDialog behind `not(target_arch = "wasm32")`; on the web build
+// paths must come from CLI/URL instead.
+#[cfg(target_arch = "wasm32")]
+fn pick_file(_title: &str, _ext: &str) -> Option<PathBuf> {
+    None
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
+    #[cfg(target_arch = "wasm32")]
+    return run_web().await;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut recorder_mode = false;
     let mut width = 1080u32;
@@ -1861,22 +1891,14 @@ async fn main() {
 
     let audio_path = match wav_arg {
         Some(p) => PathBuf::from(p),
-        None => match rfd::FileDialog::new()
-            .add_filter("wav", &["wav"])
-            .set_title("选择背景音频 (wav)")
-            .pick_file()
-        {
+        None => match pick_file("选择背景音频 (wav)", "wav") {
             Some(p) => p,
             None => return,
         },
     };
     let json_path = match json_arg {
         Some(p) => PathBuf::from(p),
-        None => match rfd::FileDialog::new()
-            .add_filter("json", &["json"])
-            .set_title("选择谱面 (json)")
-            .pick_file()
-        {
+        None => match pick_file("选择谱面 (json)", "json") {
             Some(p) => p,
             None => return,
         },
@@ -1947,6 +1969,48 @@ async fn main() {
         loop {
             let position = music.position() as f64;
             draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
+        update_fps(&mut display_fps, &mut last_fps_update);
+        draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
+        next_frame().await;
+    }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn run_web() {
+    init_rng();
+    let font = load_ttf_font_from_bytes(FONT_DATA).expect("invalid embedded font");
+    set_default_font(font);
+    web::init_hit_sounds(TAP_HIT_DATA, DRAG_HIT_DATA);
+
+    let mut chart: Chart = loop {
+        if let Some(mut bytes) = web::take_chart() {
+            match simd_json::serde::from_slice(&mut bytes) {
+                Ok(chart) => break chart,
+                Err(error) => eprintln!("谱面格式错误: {error}"),
+            }
+        }
+        clear_background(BLACK);
+        draw_text("请在页面上选择谱面 JSON", 40.0, 80.0, 30.0, WHITE);
+        next_frame().await;
+    };
+    sort_chart(&mut chart);
+    recalculate_all_fp(&mut chart);
+
+    while !web::music_ready() {
+        clear_background(BLACK);
+        draw_text("请选择音乐文件", 40.0, 80.0, 30.0, WHITE);
+        next_frame().await;
+    }
+
+    web::music_play();
+    let mut hits: Vec<HitEffect> = Vec::new();
+    let mut composer = ChallengeComposer::new();
+    let mut display_fps = 0;
+    let mut last_fps_update = get_time();
+    loop {
+        let position = web::music_position();
+        draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
         update_fps(&mut display_fps, &mut last_fps_update);
         draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
         next_frame().await;
