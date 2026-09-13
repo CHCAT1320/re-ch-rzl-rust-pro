@@ -67,8 +67,9 @@ GitHub Actions 会在 `master` 上自动编译 Windows exe 和 macOS 二进制�
 推送 `v*` 形式的 tag 会触发 Release，产物包含：
 
 ```text
-re-ch-rzl-rust.exe              Windows
-re-ch-rzl-rust                  macOS 通用二进制（Intel + Apple Silicon）
+re-ch-rzl-rust.exe                Windows
+re-ch-rzl-rust-macos              macOS 通用二进制（Intel + Apple Silicon）
+re-ch-rzl-rust-linux              Linux x86_64
 re-ch-rzl-rust-web-multifile.zip  web 多文件版
 re-ch-rzl-rust-web-single.html    web 单文件版
 ```

@@ -66,6 +66,33 @@ jobs:
           path: out/re-ch-rzl-rust
           if-no-files-found: error
 
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxi-dev libxcursor-dev libgl1-mesa-dev libasound2-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-linux
+          path: target/release/re-ch-rzl-rust
+          if-no-files-found: error
+
   web:
     runs-on: ubuntu-latest
     steps:
@@ -104,7 +131,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [windows, macos, web]
+    needs: [windows, macos, linux, web]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -119,6 +146,8 @@ jobs:
           cd dist/re-ch-rzl-rust-web-multifile
           zip -r ../re-ch-rzl-rust-web-multifile.zip .
           cd ../..
+          cp dist/re-ch-rzl-rust-macos/re-ch-rzl-rust dist/re-ch-rzl-rust-macos
+          cp dist/re-ch-rzl-rust-linux/re-ch-rzl-rust dist/re-ch-rzl-rust-linux
           cp dist/re-ch-rzl-rust-web-single/re-ch-rzl-rust.html dist/re-ch-rzl-rust-web-single.html
           ls -R dist
 
@@ -129,12 +158,13 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           assets=(
             dist/re-ch-rzl-rust-windows/re-ch-rzl-rust.exe
-            dist/re-ch-rzl-rust-macos/re-ch-rzl-rust
+            dist/re-ch-rzl-rust-macos
+            dist/re-ch-rzl-rust-linux
             dist/re-ch-rzl-rust-web-multifile.zip
             dist/re-ch-rzl-rust-web-single.html
           )
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber
           else
-            gh release create "$tag" --title "$tag" --generate-notes "${assets[@]}"
+            gh release create "$tag" --draft --title "$tag" --generate-notes "${assets[@]}"
           fi
