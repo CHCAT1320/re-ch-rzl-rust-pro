@@ -1,0 +1,38 @@
+name: Commit Diff Image
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'diff/**'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  diff-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Install dependencies
+        run: sudo apt-get install -y --no-install-recommends python3-pil
+
+      - name: Render diff PNG
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/render_diff.py
+
+      - name: Commit diff image
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add diff/diff.zh.png diff/diff.en.png
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update diff image [skip ci]"
+          git push

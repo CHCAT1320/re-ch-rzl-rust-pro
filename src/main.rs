@@ -29,11 +29,22 @@ pub static NvOptimusEnablement: u32 = 1;
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
 
 const SPEED: f64 = 7.0;
-const REVELATION_SIZE: f64 = 1.0;
+const FONT_DATA: &[u8] = include_bytes!("../assets/fonts/rizline.ttf");
 
 thread_local! {
     static RENDER_WIDTH: Cell<f32> = Cell::new(0.0);
     static RENDER_HEIGHT: Cell<f32> = Cell::new(0.0);
+    static REVELATION_SIZE: Cell<f64> = Cell::new(1.0);
+}
+
+fn revelation_size() -> f64 {
+    REVELATION_SIZE.with(|c| c.get())
+}
+
+fn set_revelation_size(value: f64) {
+    if value.is_finite() && value > 0.0 {
+        REVELATION_SIZE.with(|c| c.set(value));
+    }
 }
 
 fn render_w() -> f32 {
@@ -63,11 +74,11 @@ fn screen_radio_h() -> f64 {
 }
 
 fn scale_x() -> f64 {
-    REVELATION_SIZE * screen_radio_w()
+    revelation_size() * screen_radio_w()
 }
 
 fn scale_y() -> f64 {
-    REVELATION_SIZE * screen_radio_h()
+    revelation_size() * screen_radio_h()
 }
 
 fn center_x() -> f64 {
@@ -100,11 +111,11 @@ fn floor_y() -> f64 {
 }
 
 fn draw_scaled_range() {
-    if REVELATION_SIZE >= 1.0 {
+    if revelation_size() >= 1.0 {
         return;
     }
-    let x = 360.0 * screen_radio_w() * (1.0 - REVELATION_SIZE);
-    let y = 1040.0 * screen_radio_h() * (1.0 - REVELATION_SIZE);
+    let x = 360.0 * screen_radio_w() * (1.0 - revelation_size());
+    let y = 1040.0 * screen_radio_h() * (1.0 - revelation_size());
     let w = 720.0 * scale_x();
     let h = 1280.0 * scale_y();
     draw_rectangle_lines(x as f32, y as f32, w as f32, h as f32, 2.0, RED);
@@ -172,7 +183,7 @@ fn draw_combo(chart: &Chart) {
 }
 
 fn draw_revelation_info(chart: &Chart, time: f64) {
-    if REVELATION_SIZE >= 1.0 {
+    if revelation_size() >= 1.0 {
         return;
     }
     let font_size = 24.0 * screen_radio_w();
@@ -196,8 +207,8 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
         format!("Line count: {}", chart.lines.len()),
         format!("Point count: {}", point_count),
         format!("Note count: {}", note_count),
-        format!("Camera scale: {}", camera_pos[1] / REVELATION_SIZE),
-        format!("Revelation scale: {}", REVELATION_SIZE),
+        format!("Camera scale: {}", camera_pos[1]),
+        format!("Revelation scale: {}", revelation_size()),
         format!("Camera scale event count: {}", chart.camera_move.scale_key_points.len()),
         format!("Camera move event count: {}", chart.camera_move.x_position_key_points.len()),
         format!("Camera X: {}", camera_pos[0]),
@@ -212,7 +223,7 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
 }
 
 fn draw_shui_yin() {
-    let (base_font, text) = if REVELATION_SIZE >= 1.0 {
+    let (base_font, text) = if revelation_size() >= 1.0 {
         (24.0 * screen_radio_w(), "CH-RZL-RUST PLAYER VERSION 0.1.0 ALL CODE BY CHCAT1320")
     } else {
         (18.0 * screen_radio_w(), "CHART REVELATION : CH-RZL-RUST PLAYER VERSION 0.1.0 ALL CODE BY CHCAT1320")
@@ -595,7 +606,7 @@ fn quantize_font_size(x: f64) -> f64 {
 }
 
 fn update_canvases_text(chart: &Chart, time: f64) {
-    if REVELATION_SIZE >= 1.0 {
+    if revelation_size() >= 1.0 {
         return;
     }
     let camera_pos = find_canmera_move(chart, time);
@@ -609,7 +620,7 @@ fn update_canvases_text(chart: &Chart, time: f64) {
         let text = &format!("{}", i);
         let dim = measure_text(text, None, font_size as u16, 1.0);
         let tx = x - dim.width as f64 / 2.0;
-        let ty = floor_y() + 200.0 * (scale * REVELATION_SIZE) * (1280.0 / 540.0) * screen_radio_h();
+        let ty = floor_y() + 200.0 * (scale * revelation_size()) * (1280.0 / 540.0) * screen_radio_h();
         draw_text(text, tx as f32, ty as f32, font_size as f32, BLACK);
     }
 }
@@ -710,7 +721,7 @@ fn draw_lines(chart: &Chart, time: f64) {
             let cvs_pos = find_canvas_move(chart, time, point.canvas_index as i32);
             let x = (point.x_position + cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
             let y = (-(point.floor_position - cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y();
-            if REVELATION_SIZE < 1.0 {
+            if revelation_size() < 1.0 {
                 draw_circle(x as f32, y as f32, 4.0, BLACK);
             }
             let result_color = match line_color {
@@ -1804,6 +1815,14 @@ async fn main() {
             }
             "--hwaccel" => hwaccel = Some(true),
             "--no-hwaccel" => hwaccel = Some(false),
+            "--revelation" | "--revelation-size" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    if let Ok(value) = v.parse::<f64>() {
+                        set_revelation_size(value);
+                    }
+                }
+            }
             _ => {
                 if args[i].to_lowercase().ends_with(".wav") {
                     wav_arg = Some(args[i].clone());
@@ -1854,7 +1873,7 @@ async fn main() {
     };
 
     let mut music = manager.create_music(clip, params).unwrap();
-    let font = load_ttf_font("./assets/fonts/rizline.ttf").await.unwrap();
+    let font = load_ttf_font_from_bytes(FONT_DATA).expect("invalid embedded font");
     set_default_font(font);
     let mut json_data = match std::fs::read(&json_path) {
         Ok(data) => data,

@@ -1,0 +1,35 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'diff/**'
+      - 'README.md'
+      - '.github/workflows/commit-diff-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: re-ch-rzl-rust-windows
+          path: target/release/re-ch-rzl-rust.exe
+          if-no-files-found: error
