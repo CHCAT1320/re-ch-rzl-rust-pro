@@ -1146,8 +1146,7 @@ def draw_card(img, draw: ImageDraw.ImageDraw, x: int, y: int, w: int, layout: di
             r = 6 if row["head"] else 5
             if row.get("continues") and row["index"] not in edge_sources:
                 od.line(
-                    (ox(node_x), oy(dot_y)),
-                    (ox(node_x), oy(dot_y + COMMIT_ROW_H * 0.55)),
+                    (ox(node_x), oy(dot_y), ox(node_x), oy(dot_y + COMMIT_ROW_H * 0.55)),
                     fill=row["color"],
                     width=2 * ss,
                 )

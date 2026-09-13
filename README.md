@@ -67,11 +67,13 @@ build-windows.yml   Windows exe
 build-macos.yml     macOS 通用二进制
 build-linux.yml     Linux x86_64
 build-web.yml       web 多文件版 + 单文件版
-build-ios.yml       iOS 目标编译验证（不签名，暂不出 ipa）
+build-ios.yml       iOS ipa（未签名）
 build.yml           调用上面几个，并汇总成一个 release 草稿
 ```
 
-每个平台工作流也支持单独 `workflow_dispatch`。iOS 目前标记为 `continue-on-error`，失败不会挡住 release。另外 `commit-diff-image.yml` 负责生成提交差异图。
+每个平台工作流也支持单独 `workflow_dispatch`。另外 `commit-diff-image.yml` 负责生成提交差异图。
+
+注意 iOS 已加入 release 的 `needs`，它构建失败会跳过 release。
 
 ## 移动端
 
@@ -80,18 +82,29 @@ build.yml           调用上面几个，并汇总成一个 release 草稿
 - iOS：App 内弹出系统文件选择器（`UIDocumentPickerViewController`）。先选谱面（`public.json`），再选音乐（`public.audio`）。选择器完全用 Rust + `objc2` 实现，不需要 Swift/Objective-C 文件；选中的文件通过 security-scoped URL 读取
 - Android：目前是扫描应用 Documents 目录的临时实现，还没有系统选择器（需要 Java/Kotlin Activity 壳）
 
-录制功能在移动端不可用（依赖 ffmpeg 子进程）。iOS 若要产出可安装的 `.ipa`，还需要一个 Xcode 应用工程去链接 Rust 库。
+录制功能在移动端不可用（依赖 ffmpeg 子进程）。
+
+iOS 的 `.app` 只是一个文件夹（cargo 二进制 + `Info.plist`），所以 CI 直接产出 `.ipa`，不需要 Xcode 工程。但构建未签名，装到设备前需要用 AltStore / Sideloadly 之类重签。
+
+`Build iOS` 同时产出一个模拟器版本 `re-ch-rzl-rust-ios-simulator.zip`（`lipo` 合成的 arm64 + x86_64 通用 `.app`），只作为构建产物，不进 Release：
+
+```text
+unzip re-ch-rzl-rust-ios-simulator.zip
+xcrun simctl install booted re-ch-rzl-rust.app
+xcrun simctl launch booted io.github.chcat1320.re-ch-rzl-rust
+```
 
 ## 发布
 
 产物包含：
 
 ```text
-re-ch-rzl-rust.exe                Windows
-re-ch-rzl-rust-macos              macOS 通用二进制（Intel + Apple Silicon）
-re-ch-rzl-rust-linux              Linux x86_64
-re-ch-rzl-rust-web-multifile.zip  web 多文件版
-re-ch-rzl-rust-web-single.html    web 单文件版
+re-ch-rzl-rust-windows.zip          Windows（内含 re-ch-rzl-rust.exe）
+re-ch-rzl-rust-macos.zip            macOS 通用二进制（Intel + Apple Silicon）
+re-ch-rzl-rust-linux.zip            Linux x86_64
+re-ch-rzl-rust-ios.ipa              iOS（未签名，需自行重签）
+re-ch-rzl-rust-web-multifile.zip    web 多文件版
+re-ch-rzl-rust-web-single.zip       web 单文件版（内含 re-ch-rzl-rust.html）
 ```
 
 **自动草稿**

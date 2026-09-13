@@ -31,11 +31,14 @@ jobs:
   web:
     uses: ./.github/workflows/build-web.yml
 
+  ios:
+    uses: ./.github/workflows/build-ios.yml
+
   release:
     # Tag pushes and manual runs with a tag publish; manual runs without one
     # only build artifacts. Branch pushes keep a rolling draft up to date.
     if: github.event_name != 'workflow_dispatch' || inputs.tag != ''
-    needs: [windows, macos, linux, web]
+    needs: [windows, macos, linux, web, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -53,13 +56,22 @@ jobs:
       - name: Package assets
         run: |
           mkdir -p release
-          cd dist/re-ch-rzl-rust-web-multifile
-          zip -r ../../release/re-ch-rzl-rust-web-multifile.zip .
-          cd ../..
-          cp dist/re-ch-rzl-rust-windows/re-ch-rzl-rust.exe release/re-ch-rzl-rust.exe
-          cp dist/re-ch-rzl-rust-macos/re-ch-rzl-rust release/re-ch-rzl-rust-macos
-          cp dist/re-ch-rzl-rust-linux/re-ch-rzl-rust release/re-ch-rzl-rust-linux
-          cp dist/re-ch-rzl-rust-web-single/re-ch-rzl-rust.html release/re-ch-rzl-rust-web-single.html
+          # One zip per platform so every asset has an extension. Info-ZIP
+          # records Unix permissions, so unzip restores the executable bit.
+          for name in \
+            re-ch-rzl-rust-windows \
+            re-ch-rzl-rust-macos \
+            re-ch-rzl-rust-linux \
+            re-ch-rzl-rust-web-multifile \
+            re-ch-rzl-rust-web-single
+          do
+            (
+              cd "dist/$name"
+              zip -r "../../release/$name.zip" .
+            )
+          done
+          # The iOS artifact is already an ipa, ship it as-is.
+          cp dist/re-ch-rzl-rust-ios/re-ch-rzl-rust-ios.ipa release/re-ch-rzl-rust-ios.ipa
           ls -l release
 
       - name: Publish draft release
@@ -77,11 +89,12 @@ jobs:
           fi
           echo "release tag: $tag"
           assets=(
-            release/re-ch-rzl-rust.exe
-            release/re-ch-rzl-rust-macos
-            release/re-ch-rzl-rust-linux
+            release/re-ch-rzl-rust-windows.zip
+            release/re-ch-rzl-rust-macos.zip
+            release/re-ch-rzl-rust-linux.zip
+            release/re-ch-rzl-rust-ios.ipa
             release/re-ch-rzl-rust-web-multifile.zip
-            release/re-ch-rzl-rust-web-single.html
+            release/re-ch-rzl-rust-web-single.zip
           )
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber
@@ -92,13 +105,14 @@ jobs:
 
           | 文件 | 平台 |
           | --- | --- |
-          | `re-ch-rzl-rust.exe` | Windows |
-          | `re-ch-rzl-rust-macos` | macOS（Intel + Apple Silicon 通用二进制） |
-          | `re-ch-rzl-rust-linux` | Linux x86_64 |
+          | `re-ch-rzl-rust-windows.zip` | Windows（内含 exe） |
+          | `re-ch-rzl-rust-macos.zip` | macOS 通用二进制（Intel + Apple Silicon） |
+          | `re-ch-rzl-rust-linux.zip` | Linux x86_64 |
+          | `re-ch-rzl-rust-ios.ipa` | iOS（未签名，需自行重签后才能装到设备） |
           | `re-ch-rzl-rust-web-multifile.zip` | web 多文件版 |
-          | `re-ch-rzl-rust-web-single.html` | web 单文件版 |
+          | `re-ch-rzl-rust-web-single.zip` | web 单文件版（内含 html） |
 
-          Windows / macOS 双击即可运行；Linux 需 `chmod +x`。字体与打击音已内嵌，仅需自备谱面和音乐。
+          解压后运行；macOS 若用 Finder 解压可能丢失可执行位，建议命令行 `unzip`。字体与打击音已内嵌，仅需自备谱面和音乐。
 
           web 单文件版可直接用浏览器打开，但需要通过 HTTP 访问，`file://` 无法加载 wasm。
 

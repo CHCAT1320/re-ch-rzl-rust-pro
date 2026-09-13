@@ -1,14 +1,7 @@
 name: Build iOS
 
-# Standalone on purpose: signing and the .ipa packaging are still missing, so
-# this must not be able to block the release workflow.
 on:
-  push:
-    branches: [master]
-    tags: ['v*']
-    paths-ignore:
-      - 'diff/**'
-      - 'README.md'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -23,21 +16,78 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Signing is intentionally skipped: this produces the Rust executable for
-      # the iOS target, which is the compile/link validation step. Turning it
-      # into an installable .ipa still needs an Xcode app project that links the
-      # Rust library and declares Info.plist / UIFileSharingEnabled.
       - name: Build for iOS
         run: cargo build --release --target aarch64-apple-ios
 
-      - name: Upload binary
+      # An iOS app bundle is just a folder: the cargo binary plus Info.plist.
+      # No Xcode project or post-processor is required. Signing is skipped, so
+      # the .ipa has to be re-signed before it can be installed on a device.
+      - name: Package ipa
+        run: |
+          set -eu
+          app="re-ch-rzl-rust.app"
+          rm -rf Payload
+          mkdir -p "Payload/$app"
+          cp target/aarch64-apple-ios/release/re-ch-rzl-rust "Payload/$app/re-ch-rzl-rust"
+          chmod +x "Payload/$app/re-ch-rzl-rust"
+          cat > "Payload/$app/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>re-ch-rzl-rust</string>
+            <key>CFBundleIdentifier</key><string>io.github.chcat1320.re-ch-rzl-rust</string>
+            <key>CFBundleName</key><string>re-ch-rzl-rust</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>MinimumOSVersion</key><string>13.0</string>
+            <key>UIFileSharingEnabled</key><true/>
+            <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+            <key>UISupportedInterfaceOrientations</key>
+            <array><string>UIInterfaceOrientationPortrait</string></array>
+          </dict>
+          </plist>
+          PLIST
+          zip -q -r re-ch-rzl-rust-ios.ipa Payload
+          ls -l re-ch-rzl-rust-ios.ipa
+          unzip -l re-ch-rzl-rust-ios.ipa
+
+      - name: Upload ipa
         uses: actions/upload-artifact@v6
         with:
           name: re-ch-rzl-rust-ios
-          path: target/aarch64-apple-ios/release/re-ch-rzl-rust
-          if-no-files-found: warn
+          path: re-ch-rzl-rust-ios.ipa
+          if-no-files-found: error
+
+      # Simulator build: a universal .app (Apple Silicon + Intel simulator) that
+      # installs with `xcrun simctl install booted <app>`. No signing needed.
+      - name: Package simulator app
+        run: |
+          set -eu
+          cargo build --release --target aarch64-apple-ios-sim
+          cargo build --release --target x86_64-apple-ios
+          app="re-ch-rzl-rust.app"
+          rm -rf sim
+          mkdir -p "sim/$app"
+          cp "Payload/$app/Info.plist" "sim/$app/Info.plist"
+          lipo -create \
+            target/aarch64-apple-ios-sim/release/re-ch-rzl-rust \
+            target/x86_64-apple-ios/release/re-ch-rzl-rust \
+            -output "sim/$app/re-ch-rzl-rust"
+          chmod +x "sim/$app/re-ch-rzl-rust"
+          lipo -archs "sim/$app/re-ch-rzl-rust"
+          ( cd sim && zip -q -r ../re-ch-rzl-rust-ios-simulator.zip "$app" )
+          unzip -l re-ch-rzl-rust-ios-simulator.zip
+
+      - name: Upload simulator app
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-ios-simulator
+          path: re-ch-rzl-rust-ios-simulator.zip
+          if-no-files-found: error
