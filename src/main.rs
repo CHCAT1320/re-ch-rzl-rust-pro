@@ -98,6 +98,15 @@ fn window_conf() -> Conf {
         window_resizable: true,
         high_dpi: false,
         sample_count: 16,
+        platform: macroquad::miniquad::conf::Platform {
+            // Render targets need WebGL2: miniquad's MSAA resolve uses
+            // glReadBuffer and READ/DRAW_FRAMEBUFFER, which do not exist in
+            // WebGL1. Calling them throws a JS exception straight back into
+            // wasm, which leaks miniquad's event-handler borrow and makes
+            // every later input event trap with "unreachable executed".
+            webgl_version: macroquad::miniquad::conf::WebGLVersion::WebGL2,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -1816,19 +1825,19 @@ async fn render_video(
     }
 }
 
+// macOS forbids running a modal panel from inside the window's drawRect
+// transaction: the blocking rfd API calls `runModal` and aborts the process.
+// The async API uses `beginSheetModalForWindow` instead, and macroquad polls
+// the main future every frame, so awaiting it is safe. The wasm build never
+// calls this - it reads the chart and music from the page's file inputs.
 #[cfg(not(target_arch = "wasm32"))]
-fn pick_file(title: &str, ext: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new()
+async fn pick_file(title: &str, ext: &str) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
         .add_filter(ext, &[ext])
         .set_title(title)
         .pick_file()
-}
-
-// rfd gates FileDialog behind `not(target_arch = "wasm32")`; on the web build
-// paths must come from CLI/URL instead.
-#[cfg(target_arch = "wasm32")]
-fn pick_file(_title: &str, _ext: &str) -> Option<PathBuf> {
-    None
+        .await
+        .map(|handle| handle.path().to_path_buf())
 }
 
 #[macroquad::main(window_conf)]
@@ -1891,14 +1900,14 @@ async fn main() {
 
     let audio_path = match wav_arg {
         Some(p) => PathBuf::from(p),
-        None => match pick_file("选择背景音频 (wav)", "wav") {
+        None => match pick_file("选择背景音频 (wav)", "wav").await {
             Some(p) => p,
             None => return,
         },
     };
     let json_path = match json_arg {
         Some(p) => PathBuf::from(p),
-        None => match pick_file("选择谱面 (json)", "json") {
+        None => match pick_file("选择谱面 (json)", "json").await {
             Some(p) => p,
             None => return,
         },

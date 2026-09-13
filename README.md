@@ -50,6 +50,8 @@ python -m http.server 8123 --directory dist/web/multifile
 
 音频在页面内用 WebAudio 播放，浏览器要求用户手势后才能出声，所以 AudioContext 只在选择文件时才创建。
 
+Web 版需要 **WebGL2**：挑战过渡用离屏 RenderTarget 合成，miniquad 的 MSAA resolve 依赖 `glReadBuffer` 和 `READ/DRAW_FRAMEBUFFER`，这些在 WebGL1 下不存在。`window_conf()` 已显式请求 WebGL2。
+
 GitHub Actions 的 `web` job 会构建并上传 `re-ch-rzl-rust-web-multifile` 和 `re-ch-rzl-rust-web-single` 两个产物。
 
 ## 构建
