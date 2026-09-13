@@ -26,7 +26,22 @@ INDEX_HTML = """<!DOCTYPE html>
 <title>re-ch-rzl-rust</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
-  canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  /* Keep the canvas at 9:16 and letterbox it inside the window instead of
+     stretching. min() picks the limiting axis, so the ratio stays exact in
+     both landscape and portrait windows. */
+  #glcanvas {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(100vw, 56.25vh);
+    height: min(177.7778vw, 100vh);
+    display: block; outline: none;
+  }
+  @supports (height: 100dvh) {
+    #glcanvas {
+      width: min(100vw, 56.25dvh);
+      height: min(177.7778vw, 100dvh);
+    }
+  }
   #uploader {
     position: fixed; top: 0; left: 0; z-index: 10;
     display: flex; gap: 12px; align-items: center;
@@ -40,9 +55,9 @@ INDEX_HTML = """<!DOCTYPE html>
 <body>
 <canvas id="glcanvas" tabindex="1"></canvas>
 <div id="uploader">
-  <label>谱面 JSON <input id="chart-file" type="file" accept=".json,application/json"></label>
-  <label>音乐 <input id="music-file" type="file" accept="audio/*,.wav,.ogg,.mp3"></label>
-  <span id="upload-status">等待上传</span>
+  <label>chart JSON <input id="chart-file" type="file" accept=".json,application/json"></label>
+  <label>music <input id="music-file" type="file" accept="audio/*,.wav,.ogg,.mp3"></label>
+  <span id="upload-status">waiting</span>
 </div>
 <script src="mq_js_bundle.js"></script>
 <script src="app.js"></script>
@@ -59,64 +74,90 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
 // instantiation, the globals `wasm_exports` and `wasm_memory`. This file must
 // be loaded after mq_js_bundle.js and before load(...), so the extra imports
 // exist by the time the module is instantiated.
+//
+// Every import is wrapped so it can never throw back into wasm: an exception
+// raised inside a wasm import call aborts the frame without running Rust
+// destructors, which leaks miniquad's event-handler borrow and makes every
+// later input event trap with "unreachable executed". Safari throws
+// synchronously when an AudioContext is created without a user gesture, so the
+// context is only created once a file is picked.
 
 (function () {
   "use strict";
 
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
   let ctx = null;
+  const sfxRaw = {};
   const sfxBuffers = {};
   let musicBuffer = null;
   let musicSource = null;
   let musicStartTime = 0;
   let musicPlaying = false;
 
+  function safe(fn) {
+    return function () {
+      try {
+        return fn.apply(null, arguments);
+      } catch (err) {
+        console.error("audio bridge error", err);
+      }
+    };
+  }
+
   function ensureContext() {
     if (!ctx) {
+      if (!AudioCtor) throw new Error("WebAudio is unavailable");
       ctx = new AudioCtor();
     }
     return ctx;
   }
 
-  function bytesFromWasm(ptr, len) {
+  function copyFromWasm(ptr, len) {
     return new Uint8Array(wasm_memory.buffer, ptr, len).slice();
   }
 
-  function decodeFromWasm(ptr, len) {
-    return ensureContext().decodeAudioData(bytesFromWasm(ptr, len).buffer);
+  async function decodeSfx() {
+    for (const kind of Object.keys(sfxRaw)) {
+      if (sfxBuffers[kind]) continue;
+      const copy = sfxRaw[kind].slice();
+      sfxBuffers[kind] = await ensureContext().decodeAudioData(copy.buffer);
+    }
   }
 
-  importObject.env.js_sfx_load = function (kind, ptr, len) {
-    if (!AudioCtor) return;
-    decodeFromWasm(ptr, len)
-      .then((buffer) => { sfxBuffers[kind] = buffer; })
-      .catch((err) => console.error("sfx decode failed", err));
-  };
+  importObject.env.js_sfx_load = safe(function (kind, ptr, len) {
+    sfxRaw[kind] = copyFromWasm(ptr, len);
+  });
 
-  importObject.env.js_sfx_play = function (kind) {
+  importObject.env.js_sfx_play = safe(function (kind) {
     const buffer = sfxBuffers[kind];
     if (!buffer || !ctx) return;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
     source.start();
-  };
+  });
 
-  importObject.env.js_music_play = function () {
+  importObject.env.js_music_play = safe(function () {
     if (!musicBuffer) return;
-    ensureContext().resume();
-    const source = ctx.createBufferSource();
+    const context = ensureContext();
+    context.resume();
+    const source = context.createBufferSource();
     source.buffer = musicBuffer;
-    source.connect(ctx.destination);
+    source.connect(context.destination);
     source.start();
     musicSource = source;
-    musicStartTime = ctx.currentTime;
+    musicStartTime = context.currentTime;
     musicPlaying = true;
-  };
+  });
 
   importObject.env.js_music_position = function () {
-    if (!musicPlaying || !ctx) return 0;
-    return ctx.currentTime - musicStartTime;
+    try {
+      if (!musicPlaying || !ctx) return 0;
+      return ctx.currentTime - musicStartTime;
+    } catch (err) {
+      console.error("audio bridge error", err);
+      return 0;
+    }
   };
 
   const chartInput = document.getElementById("chart-file");
@@ -129,27 +170,34 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
 
   if (chartInput) {
     chartInput.addEventListener("change", async () => {
-      const file = chartInput.files && chartInput.files[0];
-      if (!file) return;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const ptr = wasm_exports.web_alloc(bytes.length);
-      new Uint8Array(wasm_memory.buffer, ptr, bytes.length).set(bytes);
-      wasm_exports.web_supply_chart(ptr, bytes.length);
-      setStatus("谱面已加载：" + file.name);
+      try {
+        const file = chartInput.files && chartInput.files[0];
+        if (!file) return;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const ptr = wasm_exports.web_alloc(bytes.length);
+        new Uint8Array(wasm_memory.buffer, ptr, bytes.length).set(bytes);
+        wasm_exports.web_supply_chart(ptr, bytes.length);
+        setStatus("chart: " + file.name);
+      } catch (err) {
+        console.error("chart load failed", err);
+        setStatus("chart failed: " + err);
+      }
     });
   }
 
   if (musicInput) {
     musicInput.addEventListener("change", async () => {
-      const file = musicInput.files && musicInput.files[0];
-      if (!file) return;
       try {
-        musicBuffer = await ensureContext().decodeAudioData(await file.arrayBuffer());
+        const file = musicInput.files && musicInput.files[0];
+        if (!file) return;
+        const data = await file.arrayBuffer();
+        await decodeSfx();
+        musicBuffer = await ensureContext().decodeAudioData(data);
         wasm_exports.web_set_music_ready();
-        setStatus("音乐已加载：" + file.name);
+        setStatus("music: " + file.name);
       } catch (err) {
-        console.error("music decode failed", err);
-        setStatus("音乐解码失败：" + err);
+        console.error("music load failed", err);
+        setStatus("music failed: " + err);
       }
     });
   }

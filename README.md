@@ -48,6 +48,8 @@ python -m http.server 8123 --directory dist/web/multifile
 
 打开 `http://127.0.0.1:8123/`，依次选择谱面 JSON 和音乐。必须用 HTTP 访问，`file://` 无法加载 wasm。
 
+音频在页面内用 WebAudio 播放，浏览器要求用户手势后才能出声，所以 AudioContext 只在选择文件时才创建。
+
 GitHub Actions 的 `web` job 会构建并上传 `re-ch-rzl-rust-web-multifile` 和 `re-ch-rzl-rust-web-single` 两个产物。
 
 ## 构建
@@ -64,7 +66,7 @@ GitHub Actions 会在 `master` 上自动编译 Windows exe 和 macOS 二进制�
 
 ```text
 re-ch-rzl-rust.exe              Windows
-re-ch-rzl-rust                  macOS
+re-ch-rzl-rust                  macOS 通用二进制（Intel + Apple Silicon）
 re-ch-rzl-rust-web-multifile.zip  web 多文件版
 re-ch-rzl-rust-web-single.html    web 单文件版
 ```

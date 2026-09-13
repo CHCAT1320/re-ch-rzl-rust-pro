@@ -14,18 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact: re-ch-rzl-rust-windows
-            path: target/release/re-ch-rzl-rust.exe
-          - os: macos-latest
-            artifact: re-ch-rzl-rust-macos
-            path: target/release/re-ch-rzl-rust
-    runs-on: ${{ matrix.os }}
+  windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -41,8 +31,39 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.path }}
+          name: re-ch-rzl-rust-windows
+          path: target/release/re-ch-rzl-rust.exe
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build universal binary
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create \
+            target/aarch64-apple-darwin/release/re-ch-rzl-rust \
+            target/x86_64-apple-darwin/release/re-ch-rzl-rust \
+            -output out/re-ch-rzl-rust
+          lipo -archs out/re-ch-rzl-rust
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-macos
+          path: out/re-ch-rzl-rust
           if-no-files-found: error
 
   web:
@@ -83,7 +104,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, web]
+    needs: [windows, macos, web]
     runs-on: ubuntu-latest
     permissions:
       contents: write
