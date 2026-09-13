@@ -198,6 +198,44 @@ def run_git(*args) -> str:
     )
 
 
+# The workflow bot commits `diff/*.png` back to the branch, so a plain
+# `HEAD~1..HEAD` diff often shows only the bot's own image update (or nothing
+# at all after a merge). Bot commits and the diff folder are ignored here.
+DIFF_EXCLUDE = ":(exclude)diff"
+BASE = "HEAD~1"
+
+
+def has_parent() -> bool:
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD~1"],
+        capture_output=True,
+    ).returncode == 0
+
+
+def is_bot_commit(sha: str) -> bool:
+    raw = run_git("log", "-1", "--pretty=%an%x1f%s", sha)
+    parts = raw.split("\x1f")
+    author = parts[0].strip() if parts else ""
+    subject = parts[1].strip().lower() if len(parts) > 1 else ""
+    return author.endswith("[bot]") or any(marker in subject for marker in BOT_MARKERS)
+
+
+def resolve_base() -> str | None:
+    """Pick the commit to compare against.
+
+    A merge commit's first parent is the local side, so `HEAD~1..HEAD` would
+    only show whatever was merged in (the bot's diff images). Prefer a bot
+    parent as the base when present, otherwise fall back to `HEAD~1`.
+    """
+    if not has_parent():
+        return None
+    parents = run_git("rev-list", "--parents", "-n", "1", "HEAD").split()[1:]
+    for parent in parents:
+        if is_bot_commit(parent):
+            return parent
+    return "HEAD~1"
+
+
 def _glob(patterns: list[str]) -> list[str]:
     out: list[str] = []
     for pattern in patterns:
@@ -402,7 +440,7 @@ def numstat_map(paths: list[str]) -> dict[str, tuple[int | None, int | None]]:
         return out
     for start in range(0, len(paths), 300):
         group = paths[start : start + 300]
-        _record_numstat(out, run_git("diff", "--numstat", "HEAD~1", "HEAD", "--", *group))
+        _record_numstat(out, run_git("diff", "--numstat", BASE, "HEAD", "--", *group, DIFF_EXCLUDE))
     return out
 
 
@@ -431,7 +469,7 @@ def load_sizes(entries: list[tuple[str, str, str | None]]) -> dict[tuple[str, st
     if not repo or not token:
         return {}
     head_sha = run_git("rev-parse", "HEAD").strip()
-    base_sha = run_git("rev-parse", "HEAD~1").strip()
+    base_sha = run_git("rev-parse", BASE).strip()
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             head_future = pool.submit(api_tree_sizes, repo, token, head_sha)
@@ -459,7 +497,7 @@ def batch_text_rows(paths: list[str]) -> dict[str, list[dict]]:
     known = set(paths)
     for start in range(0, len(paths), DIFF_CHUNK):
         group = paths[start : start + DIFF_CHUNK]
-        raw = run_git("diff", "--no-color", f"--unified={CONTEXT_LINES}", "HEAD~1", "HEAD", "--", *group)
+        raw = run_git("diff", "--no-color", f"--unified={CONTEXT_LINES}", BASE, "HEAD", "--", *group, DIFF_EXCLUDE)
         current: str | None = None
         old_no = new_no = 0
         for line in raw.splitlines():
@@ -600,8 +638,10 @@ def collect_history() -> list[dict]:
 
 
 def collect_data() -> dict:
+    global BASE
+    base = resolve_base()
     data: dict = {
-        "parent_ok": subprocess.run(["git", "rev-parse", "--verify", "HEAD~1"], capture_output=True).returncode == 0,
+        "parent_ok": base is not None,
         "sha": run_git("rev-parse", "--short", "HEAD").strip(),
         "subject": run_git("log", "-1", "--pretty=%s").strip(),
         "history": collect_history(),
@@ -612,8 +652,9 @@ def collect_data() -> dict:
     data["body"] = info[2].strip() if len(info) > 2 else ""
     if not data["parent_ok"]:
         return data
+    BASE = base
     mark = time.perf_counter()
-    entries = parse_name_status(run_git("diff", "--name-status", "HEAD~1", "HEAD"))
+    entries = parse_name_status(run_git("diff", "--name-status", BASE, "HEAD", "--", DIFF_EXCLUDE))
     print(f"[render] name-status {time.perf_counter() - mark:.1f}s ({len(entries)} files)", flush=True)
     data["entries"] = entries
     text_all = [path for status, path, _ in entries if classify(path) == "text"]
@@ -938,6 +979,9 @@ def history_card(t: dict, data: dict, max_rows: int = 20) -> dict:
                 "refs": commit["refs"],
                 "merge": len(commit["parents"]) > 1,
                 "head": i == 0,
+                # A parent outside the rendered window means the graph should
+                # keep drawing downward instead of looking like a dead end.
+                "continues": any(parent not in order for parent in commit["parents"]),
                 "color": PALETTE[lane % len(PALETTE)],
             }
         )
@@ -1094,11 +1138,19 @@ def draw_card(img, draw: ImageDraw.ImageDraw, x: int, y: int, w: int, layout: di
                 fill=PALETTE[first["row"]["lane"] % len(PALETTE)],
                 width=2 * ss,
             )
+        edge_sources = {ci for ci, _, _, _ in graph["edges"]}
         for item in commits:
             row = item["row"]
             node_x = lane_x(row["lane"])
             dot_y = y + item["y"] + COMMIT_DOT_Y
             r = 6 if row["head"] else 5
+            if row.get("continues") and row["index"] not in edge_sources:
+                od.line(
+                    (ox(node_x), oy(dot_y)),
+                    (ox(node_x), oy(dot_y + COMMIT_ROW_H * 0.55)),
+                    fill=row["color"],
+                    width=2 * ss,
+                )
             if row["head"]:
                 od.ellipse(
                     (round(ox(node_x - r - 3)), round(oy(dot_y - r - 3)), round(ox(node_x + r + 3)), round(oy(dot_y + r + 3))),

@@ -30,6 +30,23 @@ cargo build --release
 
 GitHub Actions 会在 `master` 上自动编译 Windows exe 和 macOS 二进制，并生成提交差异图。
 
+差异图由 bot 提交到 `diff/`，本地若用 merge 拉取会产生大量 `Merge branch 'master' of ...`，并让差异图只显示 bot 的图片更新。建议用 rebase：
+
+```text
+git config --global pull.rebase true
+```
+
+VS Code 仓库内已提供 `.vscode/settings.json`：
+
+```json
+{
+  "git.rebaseWhenSync": true,
+  "git.autofetch": true
+}
+```
+
+`git.rebaseWhenSync` 控制“同步”按钮；`pull.rebase` 控制所有 `git pull`。两者一起设置最稳妥。
+
 ## 中文
 
 ![最新提交差异](diff/diff.zh.png)
