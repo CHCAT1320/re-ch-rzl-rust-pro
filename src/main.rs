@@ -319,7 +319,12 @@ fn find_active_challenge_theme_index(chart: &Chart, time: f64) -> Option<usize> 
         let start_secs = chart.tick_to_seconds(ct.start);
         let end_secs = chart.tick_to_seconds(ct.end);
         let trans_start_secs = start_secs + ct.trans_time;
-        if time > trans_start_secs && time <= end_secs && idx + 1 < chart.themes.len() {
+        let is_active = if ct.trans_time <= 0.0 {
+            time >= start_secs && time <= end_secs
+        } else {
+            time > trans_start_secs && time <= end_secs
+        };
+        if is_active && idx + 1 < chart.themes.len() {
             active = Some(idx + 1);
         }
     }
@@ -327,23 +332,34 @@ fn find_active_challenge_theme_index(chart: &Chart, time: f64) -> Option<usize> 
 }
 
 // 查找当前全局 note 颜色。颜色按播放时间对应的主题获取，而不是按 note.time 获取。
-fn find_active_note_color(chart: &Chart, time: f64) -> chart::Color {
+fn note_color_for_theme(chart: &Chart, theme_idx: Option<usize>) -> chart::Color {
     let fallback = default_note_color();
     let Some(default_theme) = chart.themes.first() else {
         return fallback;
     };
-    let theme = find_active_challenge_theme_index(chart, time)
+    let theme = theme_idx
         .and_then(|idx| chart.themes.get(idx))
         .unwrap_or(default_theme);
     theme_color(theme, 1, theme_color(default_theme, 1, fallback))
 }
 
-fn draw_background(chart: &Chart) {
+fn effect_color_for_theme(chart: &Chart, theme_idx: Option<usize>) -> chart::Color {
+    let fallback = chart::Color { r: 255, g: 255, b: 255, a: 255 };
+    let Some(default_theme) = chart.themes.first() else {
+        return fallback;
+    };
+    let theme = theme_idx
+        .and_then(|idx| chart.themes.get(idx))
+        .unwrap_or(default_theme);
+    theme_color(theme, 2, theme_color(default_theme, 2, fallback))
+}
+
+fn draw_background(chart: &Chart, theme_idx: Option<usize>) {
     let screen_width = render_w();
     let screen_height = render_h();
     let bg = chart
         .themes
-        .first()
+        .get(theme_idx.unwrap_or(0))
         .map(|theme| theme_color(theme, 0, chart::Color { r: 0, g: 0, b: 0, a: 255 }))
         .unwrap_or(chart::Color { r: 0, g: 0, b: 0, a: 255 });
     let color = [bg.r, bg.g, bg.b, 255];
@@ -820,60 +836,10 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
     }
 }
 
-// 绘制rizTime挑战时间效果
-// 1) 进入过渡 (start < now <= transStart)：圆心在屏幕底部，半径由 0 增长
-// 2) 完全激活 (transStart < now <= end)：全屏显示挑战主题
-// 3) 退出过渡 (end < now <= transEnd)：圆心在屏幕顶部，半径由大缩小
-fn draw_challenge_time(chart: &Chart, time: f64) {
-    let sw = render_w();
-    let sh = render_h();
-    let cx = sw * 0.5;
-    let max_radius = sh * 15.0;
-
-    for (idx, ct) in chart.challenge_times.iter().enumerate() {
-        // 主题索引：第一个 challengeTime 用 themes[1]，依此类推。
-        // 缺失对应主题时跳过该 challenge，不复用最后一个主题。
-        let Some(theme) = chart.themes.get(idx + 1) else {
-            continue;
-        };
-        let default_bg = chart::Color { r: 0, g: 0, b: 0, a: 255 };
-        let bg = chart_color_to_macroquad(&theme_color(theme, 0, default_bg));
-
-        let start_secs = chart.tick_to_seconds(ct.start);
-        let end_secs = chart.tick_to_seconds(ct.end);
-        let trans_secs = ct.trans_time;
-        let trans_start_secs = start_secs + trans_secs;
-        let trans_end_secs = end_secs + trans_secs;
-
-        // 不在区间内
-        if time <= start_secs || time > trans_end_secs {
-            continue;
-        }
-
-        // 阶段三：退出过渡 (end < now <= transEnd)
-        if time > end_secs && time <= trans_end_secs {
-            let progress: f32 = (1.0 - (time - end_secs) / (trans_end_secs - end_secs)) as f32;
-            let radius: f32 = (max_radius as f32) * progress;
-            // 圆心在屏幕顶部 (0,0)，随 progress 缩小直至消失
-            draw_circle(cx, 0.0, radius, bg);
-        // 阶段二：完全激活 (transStart < now <= end)
-        } else if time > trans_start_secs && time <= end_secs {
-            draw_rectangle(0.0, 0.0, sw, sh, bg);
-        // 阶段一：进入过渡 (start < now <= transStart)
-        } else if time > start_secs && time <= trans_start_secs {
-            let progress: f32 = ((time - start_secs) / (trans_start_secs - start_secs)) as f32;
-            let radius: f32 = (max_radius as f32) * progress;
-            // 圆心在屏幕底部 (cx, sh)，随 progress 增大
-            draw_circle(cx, sh, radius, bg);
-        }
-    }
-}
-
 // 打击特效（对应 JS 的 hit 类）
 struct HitEffect {
     x: f64,
     timer: f64,
-    color: chart::Color,
     block_count: usize,
     blocks_r: Vec<f64>,
     block_s: Vec<f64>,
@@ -882,7 +848,7 @@ struct HitEffect {
 }
 
 impl HitEffect {
-    fn new(x: f64, timer: f64, color: chart::Color, in_challenge: bool) -> Self {
+    fn new(x: f64, timer: f64, in_challenge: bool) -> Self {
         let block_count = (rand_f64() * 2.0).floor() as usize + 3;
         let mut blocks_r = Vec::with_capacity(block_count);
         let mut block_s = Vec::with_capacity(block_count);
@@ -899,7 +865,7 @@ impl HitEffect {
                 r_b_s.push((rand_f64() * 10.0).floor() + 10.0);
             }
         }
-        Self { x, timer, color, block_count, blocks_r, block_s, r_b_offset, r_b_s }
+        Self { x, timer, block_count, blocks_r, block_s, r_b_offset, r_b_s }
     }
 }
 
@@ -914,17 +880,6 @@ fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
     let camera_x = camera_pos[0];
     let camera_scale = camera_pos[1];
     let theme_idx = find_hit_theme_index(chart, time);
-    let fallback = chart::Color { r: 255, g: 255, b: 255, a: 255 };
-    let default_theme = chart.themes.first();
-    let color = theme_idx
-        .and_then(|idx| chart.themes.get(idx))
-        .or(default_theme)
-        .map(|theme| {
-            default_theme
-                .map(|default| theme_color(theme, 2, theme_color(default, 2, fallback)))
-                .unwrap_or(fallback)
-        })
-        .unwrap_or(fallback);
     for line in &chart.lines {
         for note in &line.notes {
             let note_time = chart.tick_to_seconds(note.time);
@@ -945,13 +900,13 @@ fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
                 };
                 let ease_note = ease::EASE_FUNCS[lp.ease_type as usize](t_note);
                 let x = lp_x + (next_lp_x - lp_x) * ease_note;
-                hits.push(HitEffect::new(x, time, color, theme_idx.is_some()));
+                hits.push(HitEffect::new(x, time, theme_idx.is_some()));
             }
         }
     }
 }
 
-fn draw_hit_blocks(h: &HitEffect, t: f64, scale: f64) {
+fn draw_hit_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
     let judge_y = floor_y();
     let ease11 = ease::EASE_FUNCS[11](t);
     let ease10 = ease::EASE_FUNCS[10](t);
@@ -968,16 +923,16 @@ fn draw_hit_blocks(h: &HitEffect, t: f64, scale: f64) {
         }
         let alpha = (1.0 - ease10) as f32;
         let color = macroquad::prelude::Color::new(
-            h.color.r as f32 / 255.0,
-            h.color.g as f32 / 255.0,
-            h.color.b as f32 / 255.0,
+            color.r as f32 / 255.0,
+            color.g as f32 / 255.0,
+            color.b as f32 / 255.0,
             alpha,
         );
         draw_circle(x1 as f32, y1 as f32, radius as f32, color);
     }
 }
 
-fn draw_riz_blocks(h: &HitEffect, t: f64, scale: f64) {
+fn draw_riz_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
     if h.r_b_offset.is_empty() {
         return;
     }
@@ -995,37 +950,32 @@ fn draw_riz_blocks(h: &HitEffect, t: f64, scale: f64) {
         }
         let alpha = (1.0 - ease10) as f32;
         let color = macroquad::prelude::Color::new(
-            h.color.r as f32 / 255.0,
-            h.color.g as f32 / 255.0,
-            h.color.b as f32 / 255.0,
+            color.r as f32 / 255.0,
+            color.g as f32 / 255.0,
+            color.b as f32 / 255.0,
             alpha,
         );
         draw_circle(h.x as f32, y1 as f32, radius as f32, color);
     }
 }
 
-fn draw_hits(chart: &Chart, hits: &mut Vec<HitEffect>, time: f64) {
+fn draw_hits(chart: &Chart, hits: &[HitEffect], time: f64, effect_color: chart::Color) {
     let scale = find_canmera_move(chart, time)[1] * scale_x();
     let judge_y = floor_y();
-    hits.retain(|h| time >= h.timer && time - h.timer <= 0.5);
     for h in hits.iter() {
         let t = ((time - h.timer) / 0.5).clamp(0.0, 1.0);
         let ease_value = ease::EASE_FUNCS[11](t);
         let size = (30.0 + 70.0 * ease_value) * 2.0;
         let lw = ((30.0 - 30.0 * ease_value) * scale * 2.0).max(0.1);
-        let ring_color = chart_color_to_macroquad(&h.color);
+        let ring_color = chart_color_to_macroquad(&effect_color);
         draw_circle_lines(h.x as f32, judge_y as f32, (size * scale * 0.5) as f32, lw as f32, ring_color);
-        draw_hit_blocks(h, t, scale);
-        draw_riz_blocks(h, t, scale);
+        draw_hit_blocks(h, t, scale, effect_color);
+        draw_riz_blocks(h, t, scale, effect_color);
     }
 }
 
-fn draw_notes(chart: &mut Chart, time: f64, hits: &mut Vec<HitEffect>, mute: bool) {
+fn update_note_state(chart: &mut Chart, time: f64, hits: &mut Vec<HitEffect>, mute: bool) {
     spawn_hit_effects(chart, time, hits);
-    let camera_pos = find_canmera_move(chart, time);
-    let camera_x = camera_pos[0];
-    let camera_scale = camera_pos[1];
-    let cs = (camera_scale * scale_x() * 2.0) as f32;
 
     // 第一遍：标记 is_hited 并播放命中音效
     for line in &mut chart.lines {
@@ -1044,7 +994,14 @@ fn draw_notes(chart: &mut Chart, time: f64, hits: &mut Vec<HitEffect>, mute: boo
         }
     }
 
-    // 第二遍：绘制 notes
+    hits.retain(|h| time >= h.timer && time - h.timer <= 0.5);
+}
+
+fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
+    let camera_pos = find_canmera_move(chart, time);
+    let camera_x = camera_pos[0];
+    let camera_scale = camera_pos[1];
+    let cs = (camera_scale * scale_x() * 2.0) as f32;
     for line in &chart.lines {
         for note in &line.notes {
             if time > chart.tick_to_seconds(note.time) && note.note_type != 2 {
@@ -1076,11 +1033,10 @@ fn draw_notes(chart: &mut Chart, time: f64, hits: &mut Vec<HitEffect>, mute: boo
                 continue;
             }
 
-            let color = find_active_note_color(chart, time);
             if note.note_type == 0 {
                 let x = x_at_note;
                 let y = y_at_note;
-                draw_circle(x as f32, y as f32, 10.0 * cs, chart_color_to_macroquad(&color));
+                draw_circle(x as f32, y as f32, 10.0 * cs, chart_color_to_macroquad(&note_color));
                 draw_circle_lines(x as f32, y as f32, 10.0 * cs, 6.0 * cs, BLACK);
             } else if note.note_type == 1 {
                 let x = x_at_note;
@@ -1125,7 +1081,7 @@ fn draw_notes(chart: &mut Chart, time: f64, hits: &mut Vec<HitEffect>, mute: boo
                         let tail_cvs_pos = find_canvas_move(chart, time, hold_end_canvas_index);
                         let tail_y_offset = hold_end_fp - tail_cvs_pos[1];
                         let dy = -(tail_y_offset) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y();
-                        let color_mq = chart_color_to_macroquad(&color);
+                        let color_mq = chart_color_to_macroquad(&note_color);
                         // 已过 hold 尾：头部按 1 - dt^3 收缩消失
                         if time > hold_end_secs {
                             let dt = (time - hold_end_secs) / 0.2;
@@ -1232,21 +1188,217 @@ fn play_hit_sound(note_type: i32) {
     });
 }
 
-fn draw_frame(chart: &mut Chart, hits: &mut Vec<HitEffect>, time: f64, mute: bool, show_canvases: bool) {
+const COMPOSITE_VERTEX_SHADER: &str = r#"#version 100
+attribute vec3 position;
+attribute vec2 texcoord;
+attribute vec4 color0;
+varying lowp vec2 uv;
+varying lowp vec4 color;
+uniform mat4 Model;
+uniform mat4 Projection;
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1.0);
+    uv = texcoord;
+    color = color0 / 255.0;
+}
+"#;
+
+const COMPOSITE_FRAGMENT_SHADER: &str = r#"#version 100
+precision lowp float;
+varying vec2 uv;
+varying vec4 color;
+uniform sampler2D Texture;
+uniform sampler2D ChallengeTexture;
+uniform vec2 MaskCenter;
+uniform vec2 MaskAspect;
+uniform float MaskRadius;
+void main() {
+    vec4 base = texture2D(Texture, uv) * color;
+    vec4 challenge = texture2D(ChallengeTexture, uv) * color;
+    vec2 delta = (uv - MaskCenter) * MaskAspect;
+    float inside = step(length(delta), MaskRadius);
+    gl_FragColor = mix(base, challenge, inside);
+}
+"#;
+
+struct ChallengeComposer {
+    size: (u32, u32),
+    default_target: RenderTarget,
+    challenge_target: RenderTarget,
+    material: Material,
+}
+
+impl ChallengeComposer {
+    fn new() -> Self {
+        let material = load_material(
+            ShaderSource::Glsl {
+                vertex: COMPOSITE_VERTEX_SHADER,
+                fragment: COMPOSITE_FRAGMENT_SHADER,
+            },
+            MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("MaskCenter", UniformType::Float2),
+                    UniformDesc::new("MaskAspect", UniformType::Float2),
+                    UniformDesc::new("MaskRadius", UniformType::Float1),
+                ],
+                textures: vec!["ChallengeTexture".to_owned()],
+                ..Default::default()
+            },
+        )
+        .expect("failed to create challenge compositor");
+        Self {
+            size: (1, 1),
+            default_target: render_target(1, 1),
+            challenge_target: render_target(1, 1),
+            material,
+        }
+    }
+
+    fn ensure_size(&mut self, width: u32, height: u32) {
+        let size = (width.max(1), height.max(1));
+        if self.size == size {
+            return;
+        }
+        self.size = size;
+        self.default_target = render_target(size.0, size.1);
+        self.challenge_target = render_target(size.0, size.1);
+    }
+}
+
+fn transition_mask(chart: &Chart, time: f64) -> Option<(usize, usize, Vec2, f32)> {
+    let mut selected = None;
+    for (idx, ct) in chart.challenge_times.iter().enumerate() {
+        let theme_idx = idx + 1;
+        if theme_idx >= chart.themes.len() || ct.trans_time <= 0.0 {
+            continue;
+        }
+        let start = chart.tick_to_seconds(ct.start);
+        let end = chart.tick_to_seconds(ct.end);
+        let trans_start = start + ct.trans_time;
+        let trans_end = end + ct.trans_time;
+        if time > start && time <= trans_start {
+            selected = Some((theme_idx, 0usize, vec2(0.5, 1.0), ((time - start) / ct.trans_time) as f32));
+        } else if time > end && time <= trans_end {
+            selected = Some((theme_idx, 0usize, vec2(0.5, 0.0), (1.0 - (time - end) / ct.trans_time) as f32));
+        }
+    }
+    let (theme_idx, _, center, progress) = selected?;
+    // Use the previous theme only when the previous challenge actually reaches
+    // this transition. If there is a real gap, the chart has already returned
+    // to the default theme and the new transition must start from themes[0].
+    let base_idx = if theme_idx > 1 {
+        let previous = &chart.challenge_times[theme_idx - 2];
+        let current = &chart.challenge_times[theme_idx - 1];
+        let previous_end = chart.tick_to_seconds(previous.end) + previous.trans_time;
+        let current_start = chart.tick_to_seconds(current.start);
+        if previous_end >= current_start {
+            theme_idx - 1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    Some((
+        theme_idx,
+        base_idx,
+        center,
+        // Match sim-rzc: the circle radius is 15 screen heights at full
+        // transition progress. The shader's aspect correction keeps it round.
+        progress.clamp(0.0, 1.0) * 15.0,
+    ))
+}
+
+fn draw_scene(chart: &Chart, hits: &[HitEffect], time: f64, show_canvases: bool, theme_idx: Option<usize>) {
     clear_background(BLACK);
-    draw_background(chart);
-    draw_challenge_time(chart, time);
+    draw_background(chart, theme_idx);
     if show_canvases {
         update_canvases_text(chart, time);
     }
     draw_lines(chart, time);
-    draw_notes(chart, time, hits, mute);
-    draw_hits(chart, hits, time);
+    draw_notes(chart, time, note_color_for_theme(chart, theme_idx));
+    draw_hits(chart, hits, time, effect_color_for_theme(chart, theme_idx));
     draw_judge_ring(chart, time);
     draw_scaled_range();
     draw_combo(chart);
     draw_shui_yin();
     draw_revelation_info(chart, time);
+}
+
+fn draw_frame(
+    chart: &mut Chart,
+    hits: &mut Vec<HitEffect>,
+    time: f64,
+    mute: bool,
+    show_canvases: bool,
+    composer: &mut ChallengeComposer,
+    output_target: Option<RenderTarget>,
+) {
+    update_note_state(chart, time, hits, mute);
+    let width = render_w().round().max(1.0) as u32;
+    let height = render_h().round().max(1.0) as u32;
+    let Some((theme_idx, base_idx, mask_center, mask_radius)) = transition_mask(chart, time) else {
+        match output_target.as_ref() {
+            Some(target) => set_camera(&Camera2D {
+                render_target: Some(target.clone()),
+                ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, width as f32, height as f32))
+            }),
+            None => set_default_camera(),
+        }
+        draw_scene(chart, hits, time, show_canvases, find_active_challenge_theme_index(chart, time));
+        return;
+    };
+
+    composer.ensure_size(width, height);
+    let default_camera = Camera2D {
+        render_target: Some(composer.default_target.clone()),
+        ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, width as f32, height as f32))
+    };
+    set_camera(&default_camera);
+    draw_scene(chart, hits, time, show_canvases, (base_idx > 0).then_some(base_idx));
+
+    let challenge_camera = Camera2D {
+        render_target: Some(composer.challenge_target.clone()),
+        ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, width as f32, height as f32))
+    };
+    set_camera(&challenge_camera);
+    draw_scene(chart, hits, time, show_canvases, Some(theme_idx));
+
+    match output_target.as_ref() {
+        Some(target) => set_camera(&Camera2D {
+            render_target: Some(target.clone()),
+            ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, width as f32, height as f32))
+        }),
+        None => set_default_camera(),
+    }
+    clear_background(BLACK);
+    composer
+        .material
+        .set_texture("ChallengeTexture", composer.challenge_target.texture.clone());
+    // The RenderTarget texture has an inverted Y axis when sampled by the
+    // screen quad. Keep the transition origin aligned with the displayed
+    // image after flipping that quad vertically.
+    composer
+        .material
+        .set_uniform("MaskCenter", vec2(mask_center.x, 1.0 - mask_center.y));
+    composer.material.set_uniform(
+        "MaskAspect",
+        vec2(width as f32 / height as f32, 1.0),
+    );
+    composer.material.set_uniform("MaskRadius", mask_radius);
+    gl_use_material(&composer.material);
+    draw_texture_ex(
+        &composer.default_target.texture,
+        0.0,
+        0.0,
+        WHITE,
+        DrawTextureParams {
+            dest_size: Some(vec2(width as f32, height as f32)),
+            flip_y: true,
+            ..Default::default()
+        },
+    );
+    gl_use_default_material();
 }
 
 fn load_hit_samples(data: &[u8], channels: usize) -> Vec<f32> {
@@ -1363,6 +1515,7 @@ fn detect_hw_encoder(ffmpeg: &Path) -> Option<&'static str> {
 async fn render_video(
     chart: &mut Chart,
     hits: &mut Vec<HitEffect>,
+    composer: &mut ChallengeComposer,
     duration: f64,
     bgm_path: &Path,
     out_w: u32,
@@ -1529,11 +1682,6 @@ async fn render_video(
     });
 
     let target = render_target_msaa(w, h);
-    let camera = Camera2D {
-        render_target: Some(target.clone()),
-        ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, w as f32, h as f32))
-    };
-
     let total_frames = (duration * fps as f64).ceil().max(1.0) as u64;
     eprintln!("开始渲染: {w}x{h}@{fps}fps，共 {total_frames} 帧，编码器 {encoder}");
     let start = Instant::now();
@@ -1544,8 +1692,7 @@ async fn render_video(
     let row_bytes = w as usize * 4;
 
     while frame < total_frames {
-        set_camera(&camera);
-        draw_frame(chart, hits, time, true, true);
+        draw_frame(chart, hits, time, true, true, composer, Some(target.clone()));
         set_default_camera();
 
         let img = target.texture.get_texture_data();
@@ -1729,11 +1876,23 @@ async fn main() {
     init_rng();
 
     let mut hits: Vec<HitEffect> = Vec::new();
+    let mut composer = ChallengeComposer::new();
 
     if recorder_mode {
         // --recorder：直接视频渲染
         let _ = music.pause();
-        render_video(&mut chart, &mut hits, music_duration as f64, &audio_path, width, height, fps, hwaccel).await;
+        render_video(
+            &mut chart,
+            &mut hits,
+            &mut composer,
+            music_duration as f64,
+            &audio_path,
+            width,
+            height,
+            fps,
+            hwaccel,
+        )
+        .await;
         return;
     }
 
@@ -1743,7 +1902,7 @@ async fn main() {
     let mut last_fps_update = get_time();
         loop {
             let position = music.position() as f64;
-            draw_frame(&mut chart, &mut hits, position, false, true);
+            draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
         update_fps(&mut display_fps, &mut last_fps_update);
         draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
         next_frame().await;
