@@ -74,7 +74,7 @@ build.yml           调用上面 4 个，并汇总成一个 release 草稿
 
 ## 发布
 
-推送 `v*` 形式的 tag 会触发 Release，产物包含：
+产物包含：
 
 ```text
 re-ch-rzl-rust.exe                Windows
@@ -84,12 +84,28 @@ re-ch-rzl-rust-web-multifile.zip  web 多文件版
 re-ch-rzl-rust-web-single.html    web 单文件版
 ```
 
+**自动草稿**
+
+推送到 `master` 会自动创建或更新一个滚动草稿，tag 取 `Cargo.toml` 里的版本号：
+
+```text
+v0.1.0-draft
+```
+
+草稿在发布前不会真正创建 git tag，tag、标题、说明、资产都能在 Releases 页面自行修改，改完点 Publish 即可。
+
+**指定 tag**
+
+推 `v*` tag 会按该 tag 生成草稿：
+
 ```text
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-已存在的 tag 重新运行会覆盖同名资产。
+也可以手动 Run workflow，在 `tag` 输入框填 `v0.1.0`；留空则只构建产物、不发 Release。
+
+已存在同名 Release 时只覆盖资产，不会改动你改过的标题和说明。
 
 差异图由 bot 提交到 `diff/`，本地若用 merge 拉取会产生大量 `Merge branch 'master' of ...`，并让差异图只显示 bot 的图片更新。建议用 rebase：
 

@@ -9,6 +9,11 @@ on:
       - 'README.md'
       - '.github/workflows/commit-diff-image.yml'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Draft release tag, e.g. v0.1.0. Leave empty to only build artifacts.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -27,7 +32,9 @@ jobs:
     uses: ./.github/workflows/build-web.yml
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    # Tag pushes and manual runs with a tag publish; manual runs without one
+    # only build artifacts. Branch pushes keep a rolling draft up to date.
+    if: github.event_name != 'workflow_dispatch' || inputs.tag != ''
     needs: [windows, macos, linux, web]
     runs-on: ubuntu-latest
     permissions:
@@ -52,7 +59,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          requested="${{ inputs.tag }}"
+          if [ -n "$requested" ]; then
+            tag="$requested"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+            tag="v${version}-draft"
+          fi
+          echo "release tag: $tag"
           assets=(
             dist/re-ch-rzl-rust-windows/re-ch-rzl-rust.exe
             dist/re-ch-rzl-rust-macos
