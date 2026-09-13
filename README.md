@@ -67,10 +67,20 @@ build-windows.yml   Windows exe
 build-macos.yml     macOS 通用二进制
 build-linux.yml     Linux x86_64
 build-web.yml       web 多文件版 + 单文件版
-build.yml           调用上面 4 个，并汇总成一个 release 草稿
+build-ios.yml       iOS 目标编译验证（不签名，暂不出 ipa）
+build.yml           调用上面几个，并汇总成一个 release 草稿
 ```
 
-每个平台工作流也支持单独 `workflow_dispatch`。另外 `commit-diff-image.yml` 负责生成提交差异图。
+每个平台工作流也支持单独 `workflow_dispatch`。iOS 目前标记为 `continue-on-error`，失败不会挡住 release。另外 `commit-diff-image.yml` 负责生成提交差异图。
+
+## 移动端
+
+移动端没有命令行参数，谱面和音乐由用户手动选择：
+
+- iOS：App 内弹出系统文件选择器（`UIDocumentPickerViewController`）。先选谱面（`public.json`），再选音乐（`public.audio`）。选择器完全用 Rust + `objc2` 实现，不需要 Swift/Objective-C 文件；选中的文件通过 security-scoped URL 读取
+- Android：目前是扫描应用 Documents 目录的临时实现，还没有系统选择器（需要 Java/Kotlin Activity 壳）
+
+录制功能在移动端不可用（依赖 ffmpeg 子进程）。iOS 若要产出可安装的 `.ipa`，还需要一个 Xcode 应用工程去链接 Rust 库。
 
 ## 发布
 

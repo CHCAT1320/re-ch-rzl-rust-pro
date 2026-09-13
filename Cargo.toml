@@ -12,5 +12,23 @@ sasa = { git = "https://github.com/Mivik/sasa.git" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 simd-json = "0.13"
-rfd = "0.15"
 hound = "3.5"
+
+# rfd only has Windows/macOS/Linux/wasm backends. Desktop-only so the mobile
+# targets do not try to build a dialog backend that does not exist.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))'.dependencies]
+rfd = "0.15"
+
+# UIDocumentPickerViewController is presented from Rust through objc2, so the
+# in-app file picker needs no Swift/Objective-C file.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSObject", "NSString", "NSURL"] }
+objc2-ui-kit = { version = "0.3", features = [
+    "UIDocumentPickerViewController",
+    "UIViewController",
+    "UIResponder",
+    "UIApplication",
+    "UIWindow",
+    "block2",
+] }

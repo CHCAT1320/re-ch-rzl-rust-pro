@@ -42,22 +42,36 @@ INDEX_HTML = """<!DOCTYPE html>
       height: min(177.7778vw, 100dvh);
     }
   }
+  /* Small corner control instead of a full-width bar, so it does not cover
+     the letterboxed canvas. It collapses automatically once both files load. */
   #uploader {
-    position: fixed; top: 0; left: 0; z-index: 10;
-    display: flex; gap: 12px; align-items: center;
-    padding: 8px 12px; background: rgba(0, 0, 0, 0.6);
+    position: fixed; top: 8px; left: 8px; z-index: 10;
     color: #eee; font: 13px/1.4 system-ui, sans-serif;
   }
-  #uploader label { display: flex; gap: 6px; align-items: center; }
+  #uploader-toggle {
+    padding: 6px 12px; cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px;
+    background: rgba(0, 0, 0, 0.55); color: #eee;
+  }
+  #uploader-panel {
+    margin-top: 6px; padding: 8px 10px; border-radius: 6px;
+    display: flex; flex-direction: column; gap: 6px;
+    background: rgba(0, 0, 0, 0.7);
+  }
+  #uploader-panel[hidden] { display: none; }
+  #uploader-panel label { display: flex; gap: 6px; align-items: center; }
   #upload-status { opacity: 0.8; }
 </style>
 </head>
 <body>
 <canvas id="glcanvas" tabindex="1"></canvas>
 <div id="uploader">
-  <label>chart JSON <input id="chart-file" type="file" accept=".json,application/json"></label>
-  <label>music <input id="music-file" type="file" accept="audio/*,.wav,.ogg,.mp3"></label>
-  <span id="upload-status">waiting</span>
+  <button id="uploader-toggle" type="button">文件</button>
+  <div id="uploader-panel">
+    <label>chart JSON <input id="chart-file" type="file" accept=".json,application/json"></label>
+    <label>music <input id="music-file" type="file" accept="audio/*,.wav,.ogg,.mp3"></label>
+    <span id="upload-status">waiting</span>
+  </div>
 </div>
 <script src="mq_js_bundle.js"></script>
 <script src="app.js"></script>
@@ -163,9 +177,27 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
   const chartInput = document.getElementById("chart-file");
   const musicInput = document.getElementById("music-file");
   const status = document.getElementById("upload-status");
+  const toggle = document.getElementById("uploader-toggle");
+  const panel = document.getElementById("uploader-panel");
+
+  let chartLoaded = false;
+  let musicLoaded = false;
 
   function setStatus(text) {
     if (status) status.textContent = text;
+  }
+
+  // Collapse the panel once both files are in, so it stops covering the canvas.
+  function collapseWhenReady() {
+    if (chartLoaded && musicLoaded && panel) {
+      panel.hidden = true;
+    }
+  }
+
+  if (toggle && panel) {
+    toggle.addEventListener("click", () => {
+      panel.hidden = !panel.hidden;
+    });
   }
 
   if (chartInput) {
@@ -177,7 +209,9 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
         const ptr = wasm_exports.web_alloc(bytes.length);
         new Uint8Array(wasm_memory.buffer, ptr, bytes.length).set(bytes);
         wasm_exports.web_supply_chart(ptr, bytes.length);
+        chartLoaded = true;
         setStatus("chart: " + file.name);
+        collapseWhenReady();
       } catch (err) {
         console.error("chart load failed", err);
         setStatus("chart failed: " + err);
@@ -194,7 +228,9 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
         await decodeSfx();
         musicBuffer = await ensureContext().decodeAudioData(data);
         wasm_exports.web_set_music_ready();
+        musicLoaded = true;
         setStatus("music: " + file.name);
+        collapseWhenReady();
       } catch (err) {
         console.error("music load failed", err);
         setStatus("music failed: " + err);

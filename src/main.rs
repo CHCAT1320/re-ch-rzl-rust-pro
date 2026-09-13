@@ -4,6 +4,8 @@ mod chart;
 mod ease;
 #[cfg(target_arch = "wasm32")]
 mod web;
+#[cfg(target_os = "ios")]
+mod ios;
 
 use macroquad::prelude::*;
 use chart::Chart;
@@ -1161,6 +1163,28 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
 const TAP_HIT_DATA: &[u8] = include_bytes!("../assets/audio/hit.wav");
 const DRAG_HIT_DATA: &[u8] = include_bytes!("../assets/audio/drag.wav");
 
+// Desktop audio output is usually 44.1 kHz, but mobile devices commonly run at
+// 48 kHz. Let the device pick there instead of forcing a rate it may reject.
+#[cfg(not(target_arch = "wasm32"))]
+fn cpal_settings() -> CpalSettings {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        CpalSettings {
+            preferred_sample_rate: None,
+            buffer_size: None,
+            ..Default::default()
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        CpalSettings {
+            preferred_sample_rate: Some(44100),
+            buffer_size: Some(256),
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct HitSounds {
     _manager: AudioManager,
@@ -1171,10 +1195,7 @@ struct HitSounds {
 #[cfg(not(target_arch = "wasm32"))]
 impl HitSounds {
     fn new() -> Self {
-        let backend = CpalBackend::new(CpalSettings {
-            preferred_sample_rate: Some(44100),
-            buffer_size: Some(256),
-        });
+        let backend = CpalBackend::new(cpal_settings());
         let mut manager = AudioManager::new(backend)
             .expect("failed to create hit sound AudioManager");
         let tap = manager
@@ -1830,7 +1851,11 @@ async fn render_video(
 // The async API uses `beginSheetModalForWindow` instead, and macroquad polls
 // the main future every frame, so awaiting it is safe. The wasm build never
 // calls this - it reads the chart and music from the page's file inputs.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(
+    target_arch = "wasm32",
+    target_os = "android",
+    target_os = "ios"
+)))]
 async fn pick_file(title: &str, ext: &str) -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
         .add_filter(ext, &[ext])
@@ -1845,7 +1870,14 @@ async fn main() {
     #[cfg(target_arch = "wasm32")]
     return run_web().await;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return run_mobile().await;
+
+    #[cfg(not(any(
+        target_arch = "wasm32",
+        target_os = "android",
+        target_os = "ios"
+    )))]
     {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut recorder_mode = false;
@@ -1913,10 +1945,7 @@ async fn main() {
         },
     };
 
-    let backend = CpalBackend::new(CpalSettings {
-        preferred_sample_rate: Some(44100),
-        buffer_size: Some(256),
-    });
+    let backend = CpalBackend::new(cpal_settings());
     let mut manager = AudioManager::new(backend).unwrap();
     let data = std::fs::read(&audio_path).unwrap();
     let clip = AudioClip::new(data).unwrap();
@@ -2022,6 +2051,152 @@ async fn run_web() {
         draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
         update_fps(&mut display_fps, &mut last_fps_update);
         draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
+        next_frame().await;
+    }
+}
+
+// Mobile has no command line and no rfd backend, so the chart and the music are
+// read from the app's Documents folder. On iOS that folder is exposed through
+// Finder / the Files app (UIFileSharingEnabled), so dropping files in is the
+// "upload" step; no native file picker is required.
+#[cfg(target_os = "android")]
+fn mobile_document_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        let documents = PathBuf::from(home).join("Documents");
+        if documents.is_dir() {
+            return Some(documents);
+        }
+    }
+    std::env::current_dir().ok()
+}
+
+#[cfg(target_os = "android")]
+fn find_first_file(dir: &std::path::Path, extensions: &[&str]) -> Option<PathBuf> {
+    let mut matches: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| {
+                    let lower = name.to_lowercase();
+                    extensions.iter().any(|ext| lower.ends_with(ext))
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    matches.sort();
+    matches.into_iter().next()
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+async fn run_mobile() {
+    init_rng();
+    let font = load_ttf_font_from_bytes(FONT_DATA).expect("invalid embedded font");
+    set_default_font(font);
+
+    let json_path = choose_chart().await;
+    let audio_path = choose_music().await;
+
+    let mut json_data = match std::fs::read(&json_path) {
+        Ok(data) => data,
+        Err(error) => {
+            eprintln!("cannot read chart {}: {error}", json_path.display());
+            return;
+        }
+    };
+    let mut chart: Chart = match simd_json::serde::from_slice(&mut json_data) {
+        Ok(chart) => chart,
+        Err(error) => {
+            eprintln!("invalid chart {}: {error}", json_path.display());
+            return;
+        }
+    };
+    sort_chart(&mut chart);
+    recalculate_all_fp(&mut chart);
+
+    let backend = CpalBackend::new(cpal_settings());
+    let mut manager = AudioManager::new(backend).expect("failed to create AudioManager");
+    let data = std::fs::read(&audio_path).expect("cannot read music file");
+    let clip = AudioClip::new(data).expect("invalid music file");
+    let params = MusicParams {
+        loop_mix_time: -1.0,
+        amplifier: 1.0,
+        playback_rate: 1.0,
+        ..Default::default()
+    };
+    let mut music = manager
+        .create_music(clip, params)
+        .expect("failed to create music");
+    music.play().expect("failed to start music");
+
+    let mut hits: Vec<HitEffect> = Vec::new();
+    let mut composer = ChallengeComposer::new();
+    let mut display_fps = 0;
+    let mut last_fps_update = get_time();
+    loop {
+        let position = music.position() as f64;
+        draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
+        update_fps(&mut display_fps, &mut last_fps_update);
+        draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
+        next_frame().await;
+    }
+}
+
+#[cfg(target_os = "android")]
+async fn choose_chart() -> PathBuf {
+    let documents = mobile_document_dir();
+    loop {
+        if let Some(path) = documents
+            .as_deref()
+            .and_then(|dir| find_first_file(dir, &[".json"]))
+        {
+            return path;
+        }
+        clear_background(BLACK);
+        draw_text("Put a chart .json into the app Documents folder", 30.0, 80.0, 26.0, WHITE);
+        next_frame().await;
+    }
+}
+
+#[cfg(target_os = "android")]
+async fn choose_music() -> PathBuf {
+    let documents = mobile_document_dir();
+    loop {
+        if let Some(path) = documents
+            .as_deref()
+            .and_then(|dir| find_first_file(dir, &[".wav", ".ogg", ".mp3", ".flac"]))
+        {
+            return path;
+        }
+        clear_background(BLACK);
+        draw_text("Put a music file into the app Documents folder", 30.0, 120.0, 26.0, WHITE);
+        next_frame().await;
+    }
+}
+
+#[cfg(target_os = "ios")]
+async fn choose_chart() -> PathBuf {
+    choose_with_picker("public.json", "Select the chart .json").await
+}
+
+#[cfg(target_os = "ios")]
+async fn choose_music() -> PathBuf {
+    choose_with_picker("public.audio", "Select the music file").await
+}
+
+#[cfg(target_os = "ios")]
+async fn choose_with_picker(uti: &'static str, prompt: &'static str) -> PathBuf {
+    loop {
+        if let Some(path) = ios::take_picked() {
+            return path;
+        }
+        if !ios::is_open() {
+            ios::open_picker(uti);
+        }
+        clear_background(BLACK);
+        draw_text(prompt, 30.0, 80.0, 26.0, WHITE);
         next_frame().await;
     }
 }

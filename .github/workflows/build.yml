@@ -86,5 +86,29 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber
           else
-            gh release create "$tag" --draft --title "$tag" --generate-notes "${assets[@]}"
+            notes=$(mktemp)
+            cat <<'EOF' > "$notes"
+          ## 资源
+
+          | 文件 | 平台 |
+          | --- | --- |
+          | `re-ch-rzl-rust.exe` | Windows |
+          | `re-ch-rzl-rust-macos` | macOS（Intel + Apple Silicon 通用二进制） |
+          | `re-ch-rzl-rust-linux` | Linux x86_64 |
+          | `re-ch-rzl-rust-web-multifile.zip` | web 多文件版 |
+          | `re-ch-rzl-rust-web-single.html` | web 单文件版 |
+
+          Windows / macOS 双击即可运行；Linux 需 `chmod +x`。字体与打击音已内嵌，仅需自备谱面和音乐。
+
+          web 单文件版可直接用浏览器打开，但需要通过 HTTP 访问，`file://` 无法加载 wasm。
+
+          ## 变更
+
+          EOF
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$tag" -f target_commitish="${GITHUB_SHA}" \
+              --jq .body >> "$notes" 2>/dev/null \
+              || echo "_暂无可自动生成的变更记录_" >> "$notes"
+
+            gh release create "$tag" --draft --title "$tag" --notes-file "$notes" "${assets[@]}"
           fi

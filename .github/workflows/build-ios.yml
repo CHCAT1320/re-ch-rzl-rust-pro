@@ -1,0 +1,43 @@
+name: Build iOS
+
+# Standalone on purpose: signing and the .ipa packaging are still missing, so
+# this must not be able to block the release workflow.
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+    paths-ignore:
+      - 'diff/**'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Signing is intentionally skipped: this produces the Rust executable for
+      # the iOS target, which is the compile/link validation step. Turning it
+      # into an installable .ipa still needs an Xcode app project that links the
+      # Rust library and declares Info.plist / UIFileSharingEnabled.
+      - name: Build for iOS
+        run: cargo build --release --target aarch64-apple-ios
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-ios
+          path: target/aarch64-apple-ios/release/re-ch-rzl-rust
+          if-no-files-found: warn
