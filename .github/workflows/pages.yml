@@ -1,23 +1,20 @@
 name: Deploy Web to GitHub Pages
 
-on:
-  push:
-    branches: [master]
-    paths:
-      - 'src/**'
-      - 'assets/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/scripts/build_web.py'
-      - '.github/scripts/subset_font.py'
-      - '.github/actions/subset-font/**'
-      - '.github/workflows/pages.yml'
-  workflow_dispatch:
-
+# The wasm is compiled once by the "Build" workflow. This workflow only waits
+# for that run, pulls its `re-ch-rzl-rust-web-*` artifacts and publishes them,
+# so a master push never builds the web target twice.
+#
 # GitHub Pages must be switched to "GitHub Actions" as the source in the repo
-# settings once; after that this workflow publishes on every master push.
+# settings once.
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+    branches: [master]
 
 permissions:
+  actions: read
   contents: read
   pages: write
   id-token: write
@@ -27,37 +24,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download multifile web build
+        uses: actions/download-artifact@v6
         with:
-          targets: wasm32-unknown-unknown
+          name: re-ch-rzl-rust-web-multifile
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: site
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Subset font
-        uses: ./.github/actions/subset-font
-
-      - name: Build wasm
-        run: cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
-
-      - name: Package web
-        run: |
-          python3 .github/scripts/build_web.py \
-            --wasm target/wasm32-unknown-unknown/release/re-ch-rzl-rust.wasm \
-            --out dist/web
+      - name: Download single-file web build
+        uses: actions/download-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-single
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: single
 
       - name: Assemble site
         run: |
-          mkdir -p site
-          cp -r dist/web/multifile/. site/
-          # Keep the self-contained single-file build downloadable as well.
-          cp dist/web/single/re-ch-rzl-rust.html site/single.html
+          cp single/re-ch-rzl-rust.html site/single.html
           touch site/.nojekyll
 
       - name: Configure Pages
@@ -68,13 +60,6 @@ jobs:
         with:
           path: site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
