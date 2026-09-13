@@ -21,6 +21,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Subset font
+        uses: ./.github/actions/subset-font
+
       - name: Build wasm
         run: cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
 

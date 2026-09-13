@@ -1,0 +1,15 @@
+name: Subset font
+description: Regenerate the subset font that the binary embeds from the source font.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Build subset
+      shell: bash
+      run: |
+        python -m pip install --quiet fonttools
+        python .github/scripts/subset_font.py

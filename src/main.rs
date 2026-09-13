@@ -35,7 +35,7 @@ pub static NvOptimusEnablement: u32 = 1;
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
 
 const SPEED: f64 = 7.0;
-const FONT_DATA: &[u8] = include_bytes!("../assets/fonts/rizline.ttf");
+const FONT_DATA: &[u8] = include_bytes!("../assets/fonts/rizline-subset.ttf");
 
 thread_local! {
     static RENDER_WIDTH: Cell<f32> = Cell::new(0.0);

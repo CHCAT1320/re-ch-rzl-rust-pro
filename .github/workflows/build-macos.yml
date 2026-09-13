@@ -21,6 +21,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Subset font
+        uses: ./.github/actions/subset-font
+
       - name: Build universal binary
         run: |
           cargo build --release --target aarch64-apple-darwin
