@@ -20,10 +20,12 @@ use std::time::Instant;
 use crate::chart::{Theme, tick_to_seconds_impl};
 
 // 强制使用独立显卡（NVIDIA Optimus / AMD PowerXpress）
+#[cfg(target_os = "windows")]
 #[unsafe(no_mangle)]
 #[allow(non_upper_case_globals)]
 pub static NvOptimusEnablement: u32 = 1;
 
+#[cfg(target_os = "windows")]
 #[unsafe(no_mangle)]
 #[allow(non_upper_case_globals)]
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
