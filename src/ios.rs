@@ -15,11 +15,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{MainThreadOnly, define_class, msg_send_id};
+use objc2::{MainThreadOnly, define_class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSArray, NSObject, NSObjectProtocol, NSString, NSURL};
-use objc2_ui_kit::{
-    UIApplication, UIDocumentPickerDelegate, UIDocumentPickerMode, UIDocumentPickerViewController,
-};
+use objc2_ui_kit::{UIApplication, UIDocumentPickerDelegate, UIDocumentPickerViewController};
+#[allow(deprecated)]
+use objc2_ui_kit::UIDocumentPickerMode;
 
 static PICKED: Mutex<Option<PathBuf>> = Mutex::new(None);
 static OPEN: AtomicBool = AtomicBool::new(false);
@@ -78,6 +78,7 @@ pub fn take_picked() -> Option<PathBuf> {
     PICKED.lock().unwrap().take()
 }
 
+#[allow(deprecated)]
 pub fn open_picker(uti: &str) {
     CANCELLED.store(false, Ordering::SeqCst);
 
@@ -85,10 +86,12 @@ pub fn open_picker(uti: &str) {
         return;
     };
 
+    // `set_ivars` yields a partially initialized instance; finish it with a
+    // super call to NSObject's `init`.
     let delegate = mtm
         .alloc::<PickerDelegate>()
         .set_ivars(PickerDelegateIvars);
-    let delegate: Retained<PickerDelegate> = unsafe { msg_send_id![delegate, init] };
+    let delegate: Retained<PickerDelegate> = unsafe { msg_send![super(delegate), init] };
 
     let types = NSArray::from_retained_slice(&[NSString::from_str(uti)]);
     #[allow(deprecated)]
