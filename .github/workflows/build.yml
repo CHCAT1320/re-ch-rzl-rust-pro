@@ -40,6 +40,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Needed for Cargo.toml (draft tag) and for gh to resolve the repository.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v6
         with:
