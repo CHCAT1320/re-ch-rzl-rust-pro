@@ -1,8 +1,8 @@
 //! iOS document picker.
 //!
 //! `UIDocumentPickerViewController` is presented from the app's key window and
-//! its delegate is declared in Rust with `objc2`'s `declare_class!`, so no
-//! Swift or Objective-C file is needed.
+//! its delegate is declared in Rust with `objc2`'s `define_class!`, so no Swift
+//! or Objective-C file is needed.
 //!
 //! Picked files are security-scoped URLs: the delegate keeps the scope open and
 //! stores the path, and the caller reads the bytes with `std::fs` once the
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{ClassType, DeclaredClass, MainThreadOnly, declare_class, msg_send_id};
+use objc2::{MainThreadOnly, define_class, msg_send_id};
 use objc2_foundation::{MainThreadMarker, NSArray, NSObject, NSObjectProtocol, NSString, NSURL};
 use objc2_ui_kit::{
     UIApplication, UIDocumentPickerDelegate, UIDocumentPickerMode, UIDocumentPickerViewController,
@@ -30,25 +30,21 @@ thread_local! {
     static DELEGATE: RefCell<Option<Retained<PickerDelegate>>> = RefCell::new(None);
 }
 
+#[derive(Clone)]
 struct PickerDelegateIvars;
 
-declare_class!(
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements and this type has no Drop.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RzlPickerDelegate"]
+    #[ivars = PickerDelegateIvars]
     struct PickerDelegate;
-
-    unsafe impl ClassType for PickerDelegate {
-        type Super = NSObject;
-        type Mutability = MainThreadOnly;
-        const NAME: &'static str = "RzlPickerDelegate";
-    }
-
-    impl DeclaredClass for PickerDelegate {
-        type Ivars = PickerDelegateIvars;
-    }
 
     unsafe impl NSObjectProtocol for PickerDelegate {}
 
     unsafe impl UIDocumentPickerDelegate for PickerDelegate {
-        #[method(documentPicker:didPickDocumentsAtURLs:)]
+        #[unsafe(method(documentPicker:didPickDocumentsAtURLs:))]
         fn documentPicker_didPickDocumentsAtURLs(
             &self,
             _controller: &UIDocumentPickerViewController,
@@ -58,15 +54,15 @@ declare_class!(
             let Some(url) = urls.firstObject() else {
                 return;
             };
-            // Keep the security scope open: the bytes are read after this
-            // returns, from the game loop.
+            // Keep the security scope open: the bytes are read afterwards, from
+            // the game loop.
             let _ = unsafe { url.startAccessingSecurityScopedResource() };
             if let Some(path) = url.path() {
                 *PICKED.lock().unwrap() = Some(PathBuf::from(path.to_string()));
             }
         }
 
-        #[method(documentPickerWasCancelled:)]
+        #[unsafe(method(documentPickerWasCancelled:))]
         fn documentPickerWasCancelled(&self, _controller: &UIDocumentPickerViewController) {
             OPEN.store(false, Ordering::SeqCst);
             CANCELLED.store(true, Ordering::SeqCst);
