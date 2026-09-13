@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build
 
 on:
   push:
@@ -14,7 +14,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: re-ch-rzl-rust-windows
+            path: target/release/re-ch-rzl-rust.exe
+          - os: macos-latest
+            artifact: re-ch-rzl-rust-macos
+            path: target/release/re-ch-rzl-rust
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -27,9 +37,9 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
         with:
-          name: re-ch-rzl-rust-windows
-          path: target/release/re-ch-rzl-rust.exe
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
           if-no-files-found: error

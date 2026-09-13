@@ -8,6 +8,7 @@ Rizline 谱面播放 / 录制器。字体和命中音已编入二进制，运行
 
 ```text
 re-ch-rzl-rust.exe [谱面.json] [音频.wav]
+re-ch-rzl-rust [谱面.json] [音频.wav]
 ```
 
 未传路径时会弹出文件选择框。
@@ -19,7 +20,7 @@ re-ch-rzl-rust.exe [谱面.json] [音频.wav]
 | `--width` / `--height` / `--fps` | 录制分辨率和帧率 |
 | `--hwaccel` / `--no-hwaccel` | 是否使用硬件编码 |
 
-录制模式需要同目录下的 `ffmpeg.exe`，输出 `output.mp4`。
+录制模式会先找程序同目录的 `ffmpeg` / `ffmpeg.exe`，找不到再用 PATH。Mac 可用 Homebrew 安装：`brew install ffmpeg`。输出 `output.mp4`。
 
 ## 构建
 
@@ -27,7 +28,7 @@ re-ch-rzl-rust.exe [谱面.json] [音频.wav]
 cargo build --release
 ```
 
-GitHub Actions 会在 `master` 上自动编译 Windows exe，并生成提交差异图。
+GitHub Actions 会在 `master` 上自动编译 Windows exe 和 macOS 二进制，并生成提交差异图。
 
 ## 中文
 

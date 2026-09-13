@@ -1512,6 +1512,28 @@ fn draw_render_progress(frame: u64, enc_frame: u64, total: u64, submit_speed: f6
     }
 }
 
+fn ffmpeg_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["ffmpeg.exe", "ffmpeg"]
+    } else {
+        &["ffmpeg", "ffmpeg.exe"]
+    }
+}
+
+fn resolve_ffmpeg() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in ffmpeg_names() {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from(ffmpeg_names()[0])
+}
+
 fn detect_hw_encoder(ffmpeg: &Path) -> Option<&'static str> {
     let out = Command::new(ffmpeg).arg("-encoders").output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
@@ -1534,12 +1556,7 @@ async fn render_video(
     fps: u32,
     hwaccel: Option<bool>,
 ) {
-    let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
-    let ffmpeg = exe_dir.join("ffmpeg.exe");
-    if !ffmpeg.exists() {
-        eprintln!("未找到 ffmpeg.exe，请放在程序同一目录");
-        return;
-    }
+    let ffmpeg = resolve_ffmpeg();
 
     let mixed_path = match mix_audio(bgm_path, chart, "mixed_audio.wav") {
         Ok(p) => p,
@@ -1622,6 +1639,12 @@ async fn render_video(
             enc_args.push("18".to_string());
             enc_args.push("-qp_p".to_string());
             enc_args.push("18".to_string());
+        }
+        "h264_videotoolbox" => {
+            enc_args.push("-q:v".to_string());
+            enc_args.push("65".to_string());
+            enc_args.push("-allow_sw".to_string());
+            enc_args.push("1".to_string());
         }
         _ => {
             enc_args.push("-preset".to_string());
