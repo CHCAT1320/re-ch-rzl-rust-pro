@@ -660,14 +660,28 @@ fn update_canvases_text(chart: &Chart, time: f64) {
     let scale = camera_pos[1];
     // 字号按 8 的倍数量化，与预缓存集合一致
     let font_size = quantize_font_size(70.0 * scale * scale_x());
-    for i in 0..chart.canvas_moves.len() {
+    let count = chart.canvas_moves.len();
+    if count == 0 {
+        return;
+    }
+    // 序号在整屏高度内等分，各自落在所属格子的中心
+    let band = 1280.0 * screen_radio_h() / count as f64;
+    for i in 0..count {
         let canvas_pos = find_canvas_move(chart, time, i as i32);
         let x = (canvas_pos[0] + camera_x) * 720.0 * scale * scale_x() + center_x();
         let text = &format!("{}", i);
         let dim = measure_text(text, None, font_size as u16, 1.0);
         let tx = x - dim.width as f64 / 2.0;
-        let ty = floor_y() + 200.0 * (scale * revelation_size()) * (1280.0 / 540.0) * screen_radio_h();
-        draw_text(text, tx as f32, ty as f32, font_size as f32, BLACK);
+        let ty = ((count - 1 - i) as f64 + 0.5) * band + dim.offset_y as f64 - dim.height as f64 / 2.0;
+        draw_text_outlined(
+            text,
+            tx as f32,
+            ty as f32,
+            font_size as f32,
+            BLACK,
+            WHITE,
+            (font_size as f32 * 0.05).max(1.0),
+        );
     }
 }
 
