@@ -212,7 +212,7 @@ def has_parent() -> bool:
     ).returncode == 0
 
 
-def is_bot_commit(sha: str) -> bool:
+def sha_is_bot(sha: str) -> bool:
     raw = run_git("log", "-1", "--pretty=%an%x1f%s", sha)
     parts = raw.split("\x1f")
     author = parts[0].strip() if parts else ""
@@ -231,7 +231,7 @@ def resolve_base() -> str | None:
         return None
     parents = run_git("rev-list", "--parents", "-n", "1", "HEAD").split()[1:]
     for parent in parents:
-        if is_bot_commit(parent):
+        if sha_is_bot(parent):
             return parent
     return "HEAD~1"
 
