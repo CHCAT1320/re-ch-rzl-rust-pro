@@ -47,13 +47,15 @@ jobs:
 
       - name: Package assets
         run: |
+          mkdir -p release
           cd dist/re-ch-rzl-rust-web-multifile
-          zip -r ../re-ch-rzl-rust-web-multifile.zip .
+          zip -r ../../release/re-ch-rzl-rust-web-multifile.zip .
           cd ../..
-          cp dist/re-ch-rzl-rust-macos/re-ch-rzl-rust dist/re-ch-rzl-rust-macos
-          cp dist/re-ch-rzl-rust-linux/re-ch-rzl-rust dist/re-ch-rzl-rust-linux
-          cp dist/re-ch-rzl-rust-web-single/re-ch-rzl-rust.html dist/re-ch-rzl-rust-web-single.html
-          ls -R dist
+          cp dist/re-ch-rzl-rust-windows/re-ch-rzl-rust.exe release/re-ch-rzl-rust.exe
+          cp dist/re-ch-rzl-rust-macos/re-ch-rzl-rust release/re-ch-rzl-rust-macos
+          cp dist/re-ch-rzl-rust-linux/re-ch-rzl-rust release/re-ch-rzl-rust-linux
+          cp dist/re-ch-rzl-rust-web-single/re-ch-rzl-rust.html release/re-ch-rzl-rust-web-single.html
+          ls -l release
 
       - name: Publish draft release
         env:
@@ -70,11 +72,11 @@ jobs:
           fi
           echo "release tag: $tag"
           assets=(
-            dist/re-ch-rzl-rust-windows/re-ch-rzl-rust.exe
-            dist/re-ch-rzl-rust-macos
-            dist/re-ch-rzl-rust-linux
-            dist/re-ch-rzl-rust-web-multifile.zip
-            dist/re-ch-rzl-rust-web-single.html
+            release/re-ch-rzl-rust.exe
+            release/re-ch-rzl-rust-macos
+            release/re-ch-rzl-rust-linux
+            release/re-ch-rzl-rust-web-multifile.zip
+            release/re-ch-rzl-rust-web-single.html
           )
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber
