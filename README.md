@@ -86,7 +86,7 @@ build.yml           调用上面几个，并汇总成一个 release 草稿
 
 iOS 的 `.app` 只是一个文件夹（cargo 二进制 + `Info.plist`），所以 CI 直接产出 `.ipa`，不需要 Xcode 工程。但构建未签名，装到设备前需要用 AltStore / Sideloadly 之类重签。
 
-`Build iOS` 同时产出一个模拟器版本 `re-ch-rzl-rust-ios-simulator.zip`（`lipo` 合成的 arm64 + x86_64 通用 `.app`），只作为构建产物，不进 Release：
+`Build iOS` 同时产出一个模拟器版本 `re-ch-rzl-rust-ios-simulator.zip`（`lipo` 合成的 arm64 + x86_64 通用 `.app`），也会发布到 Release：
 
 ```text
 unzip re-ch-rzl-rust-ios-simulator.zip
@@ -102,7 +102,8 @@ xcrun simctl launch booted io.github.chcat1320.re-ch-rzl-rust
 re-ch-rzl-rust-windows.zip          Windows（内含 re-ch-rzl-rust.exe）
 re-ch-rzl-rust-macos.zip            macOS 通用二进制（Intel + Apple Silicon）
 re-ch-rzl-rust-linux.zip            Linux x86_64
-re-ch-rzl-rust-ios.ipa              iOS（未签名，需自行重签）
+re-ch-rzl-rust-ios.ipa              iOS 真机（未签名，需自行重签）
+re-ch-rzl-rust-ios-simulator.zip    iOS 模拟器（arm64 + x86_64 通用 app）
 re-ch-rzl-rust-web-multifile.zip    web 多文件版
 re-ch-rzl-rust-web-single.zip       web 单文件版（内含 re-ch-rzl-rust.html）
 ```

@@ -70,8 +70,10 @@ jobs:
               zip -r "../../release/$name.zip" .
             )
           done
-          # The iOS artifact is already an ipa, ship it as-is.
+          # The iOS artifacts are already archives, ship them as-is.
           cp dist/re-ch-rzl-rust-ios/re-ch-rzl-rust-ios.ipa release/re-ch-rzl-rust-ios.ipa
+          cp dist/re-ch-rzl-rust-ios-simulator/re-ch-rzl-rust-ios-simulator.zip \
+             release/re-ch-rzl-rust-ios-simulator.zip
           ls -l release
 
       - name: Publish draft release
@@ -93,10 +95,20 @@ jobs:
             release/re-ch-rzl-rust-macos.zip
             release/re-ch-rzl-rust-linux.zip
             release/re-ch-rzl-rust-ios.ipa
+            release/re-ch-rzl-rust-ios-simulator.zip
             release/re-ch-rzl-rust-web-multifile.zip
             release/re-ch-rzl-rust-web-single.zip
           )
           if gh release view "$tag" >/dev/null 2>&1; then
+            # Keep the asset list in sync: --clobber only replaces same-named
+            # files, so assets from earlier naming schemes would pile up.
+            keep=$(printf '%s\n' "${assets[@]}" | xargs -n1 basename)
+            gh release view "$tag" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              if ! printf '%s\n' "$keep" | grep -Fqx -- "$name"; then
+                echo "removing stale asset: $name"
+                gh release delete-asset "$tag" "$name" --yes
+              fi
+            done
             gh release upload "$tag" "${assets[@]}" --clobber
           else
             notes=$(mktemp)
@@ -108,7 +120,8 @@ jobs:
           | `re-ch-rzl-rust-windows.zip` | Windows（内含 exe） |
           | `re-ch-rzl-rust-macos.zip` | macOS 通用二进制（Intel + Apple Silicon） |
           | `re-ch-rzl-rust-linux.zip` | Linux x86_64 |
-          | `re-ch-rzl-rust-ios.ipa` | iOS（未签名，需自行重签后才能装到设备） |
+          | `re-ch-rzl-rust-ios.ipa` | iOS 真机（未签名，需自行重签后才能装到设备） |
+          | `re-ch-rzl-rust-ios-simulator.zip` | iOS 模拟器（arm64 + x86_64 通用 app） |
           | `re-ch-rzl-rust-web-multifile.zip` | web 多文件版 |
           | `re-ch-rzl-rust-web-single.zip` | web 单文件版（内含 html） |
 
