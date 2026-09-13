@@ -1630,6 +1630,7 @@ async fn render_video(
     hwaccel: Option<bool>,
 ) {
     let ffmpeg = resolve_ffmpeg();
+    eprintln!("ffmpeg: {}", ffmpeg.display());
 
     let mixed_path = match mix_audio(bgm_path, chart, "mixed_audio.wav") {
         Ok(p) => p,
@@ -1741,6 +1742,7 @@ async fn render_video(
         Ok(c) => c,
         Err(e) => {
             eprintln!("ffmpeg 启动失败: {e}");
+            eprintln!("找不到 ffmpeg：请把 ffmpeg.exe 放到程序同目录，或安装后加入 PATH（例如 winget install Gyan.FFmpeg）");
             return;
         }
     };
@@ -1888,12 +1890,28 @@ async fn render_video(
     target_os = "ios"
 )))]
 async fn pick_file(title: &str, ext: &str) -> Option<PathBuf> {
-    rfd::AsyncFileDialog::new()
-        .add_filter(ext, &[ext])
-        .set_title(title)
-        .pick_file()
-        .await
-        .map(|handle| handle.path().to_path_buf())
+    // Windows/Linux: rfd's async dialog resolves its future by waking it from a
+    // helper thread, and macroquad's executor panics on any wake call. The
+    // blocking dialog runs its own modal loop, so use that there instead.
+    #[cfg(not(target_os = "macos"))]
+    {
+        rfd::FileDialog::new()
+            .add_filter(ext, &[ext])
+            .set_title(title)
+            .pick_file()
+    }
+
+    // macOS: a blocking runModal inside the window's drawRect transaction
+    // aborts the process, so the sheet-based async API is required.
+    #[cfg(target_os = "macos")]
+    {
+        rfd::AsyncFileDialog::new()
+            .add_filter(ext, &[ext])
+            .set_title(title)
+            .pick_file()
+            .await
+            .map(|handle| handle.path().to_path_buf())
+    }
 }
 
 #[macroquad::main(window_conf)]
