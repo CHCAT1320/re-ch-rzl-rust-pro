@@ -34,6 +34,16 @@ pub extern "C" fn web_set_music_ready() {
     MUSIC_READY.with(|cell| cell.set(true));
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn web_set_speed(value: f64) {
+    crate::set_speed(value);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn web_set_revelation(value: f64) {
+    crate::set_revelation_size(value);
+}
+
 // --- imports provided by web/app.js -----------------------------------------
 
 unsafe extern "C" {

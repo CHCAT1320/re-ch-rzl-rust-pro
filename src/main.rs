@@ -34,22 +34,33 @@ pub static NvOptimusEnablement: u32 = 1;
 #[allow(non_upper_case_globals)]
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
 
-const SPEED: f64 = 7.0;
 const FONT_DATA: &[u8] = include_bytes!("../assets/fonts/rizline-subset.ttf");
 
 thread_local! {
     static RENDER_WIDTH: Cell<f32> = Cell::new(0.0);
     static RENDER_HEIGHT: Cell<f32> = Cell::new(0.0);
     static REVELATION_SIZE: Cell<f64> = Cell::new(1.0);
+    static SPEED: Cell<f64> = Cell::new(7.0);
 }
 
 fn revelation_size() -> f64 {
     REVELATION_SIZE.with(|c| c.get())
 }
 
-fn set_revelation_size(value: f64) {
+pub fn set_revelation_size(value: f64) {
     if value.is_finite() && value > 0.0 {
         REVELATION_SIZE.with(|c| c.set(value));
+    }
+}
+
+fn speed() -> f64 {
+    SPEED.with(|c| c.get())
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn set_speed(value: f64) {
+    if value.is_finite() && value > 0.0 {
+        SPEED.with(|c| c.set(value));
     }
 }
 
@@ -166,10 +177,30 @@ fn count_hits(chart: &Chart) -> i32 {
 }
 
 fn draw_text_outlined(text: &str, x: f32, y: f32, font_size: f32, fill: Color, outline: Color, thickness: f32) {
-    for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
-        draw_text(text, x + dx * thickness, y + dy * thickness, font_size, outline);
+    for (dx, dy) in [
+        (-1.0, 0.0),
+        (1.0, 0.0),
+        (0.0, -1.0),
+        (0.0, 1.0),
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (-1.0, 1.0),
+        (1.0, 1.0),
+    ] {
+        macroquad::text::draw_text(text, x + dx * thickness, y + dy * thickness, font_size, outline);
     }
-    draw_text(text, x, y, font_size, fill);
+    macroquad::text::draw_text(text, x, y, font_size, fill);
+}
+
+// Every on-screen text is drawn through this shadow so it stays readable over
+// light chart backgrounds. A fully transparent fill keeps the glyph-atlas
+// warm-up calls invisible while still caching the glyphs.
+fn draw_text(text: &str, x: f32, y: f32, font_size: f32, color: Color) {
+    if color.a <= 0.0 {
+        macroquad::text::draw_text(text, x, y, font_size, color);
+        return;
+    }
+    draw_text_outlined(text, x, y, font_size, color, BLACK, (font_size * 0.05).max(1.0));
 }
 
 fn draw_combo(chart: &Chart) {
@@ -228,7 +259,7 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
         format!("Camera move event count: {}", chart.camera_move.x_position_key_points.len()),
         format!("Camera X: {}", camera_pos[0]),
         format!("Challange time count: {}", chart.challenge_times.len()),
-        format!("Speed: {}", SPEED),
+        format!("Speed: {}", speed()),
     ];
 
     for line in &lines {
@@ -258,7 +289,7 @@ fn draw_shui_yin() {
 }
 
 fn speed_ratio() -> f64 {
-    (215.0 / 32.0 + SPEED) * (10.0 / 129.0)
+    (215.0 / 32.0 + speed()) * (10.0 / 129.0)
 }
 
 thread_local! {

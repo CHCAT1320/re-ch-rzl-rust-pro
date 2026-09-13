@@ -33,6 +33,8 @@ cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-und
 python .github/scripts/build_web.py --wasm target/wasm32-unknown-unknown/release/re-ch-rzl-rust.wasm --out dist/web
 ```
 
+内嵌字体只保留代码里实际会绘制的字符（谱面自带的歌名等不会被绘制），由 `.github/scripts/subset_font.py` 扫描 `src/**/*.rs` 的字符串字面量生成 `assets/fonts/rizline-subset.ttf`。CI 每次构建前会自动重跑，本地新增要显示的文案后可手动执行同一脚本。
+
 生成两个版本：
 
 ```text
@@ -47,6 +49,10 @@ python -m http.server 8123 --directory dist/web/multifile
 ```
 
 打开 `http://127.0.0.1:8123/`，依次选择谱面 JSON 和音乐。必须用 HTTP 访问，`file://` 无法加载 wasm。
+
+页面左下角有两个实时滑杆：**SPEED**（音符速度，默认 `7.0`）和**揭秘缩放**（等价于命令行的 `--revelation`，默认 `1.0`），改动会直接写入运行中的 wasm，无需重新加载谱面。
+
+所有屏幕文字都带黑色描边，避免浅色谱面背景下看不清。
 
 音频在页面内用 WebAudio 播放，浏览器要求用户手势后才能出声，所以 AudioContext 只在选择文件时才创建。
 

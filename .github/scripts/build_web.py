@@ -61,6 +61,18 @@ INDEX_HTML = """<!DOCTYPE html>
   #uploader-panel[hidden] { display: none; }
   #uploader-panel label { display: flex; gap: 6px; align-items: center; }
   #upload-status { opacity: 0.8; }
+  /* Bottom-left settings stay reachable while playing, so speed and reveal
+     scale can be tuned against the running chart. */
+  #settings {
+    position: fixed; bottom: 8px; left: 8px; z-index: 10;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px 10px; border-radius: 6px;
+    background: rgba(0, 0, 0, 0.7); color: #eee;
+    font: 13px/1.4 system-ui, sans-serif;
+  }
+  #settings label { display: flex; gap: 6px; align-items: center; }
+  #settings input[type="range"] { width: 140px; }
+  #settings .val { min-width: 36px; text-align: right; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -72,6 +84,16 @@ INDEX_HTML = """<!DOCTYPE html>
     <label>music <input id="music-file" type="file" accept="audio/*,.wav,.ogg,.mp3"></label>
     <span id="upload-status">waiting</span>
   </div>
+</div>
+<div id="settings">
+  <label>SPEED
+    <input id="speed" type="range" min="1" max="20" step="0.1" value="7">
+    <span class="val" id="speed-val">7.0</span>
+  </label>
+  <label>揭秘缩放
+    <input id="revelation" type="range" min="0.2" max="2" step="0.01" value="1">
+    <span class="val" id="revelation-val">1.00</span>
+  </label>
 </div>
 <script src="mq_js_bundle.js"></script>
 <script src="app.js"></script>
@@ -237,6 +259,43 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
       }
     });
   }
+
+  // SPEED and the chart reveal scale are live wasm state, so the sliders push
+  // straight into the running module instead of reloading the chart.
+  const speedInput = document.getElementById("speed");
+  const speedValue = document.getElementById("speed-val");
+  const revelationInput = document.getElementById("revelation");
+  const revelationValue = document.getElementById("revelation-val");
+
+  function applySpeed() {
+    if (!speedInput) return;
+    const value = parseFloat(speedInput.value);
+    if (speedValue) speedValue.textContent = value.toFixed(1);
+    if (typeof wasm_exports !== "undefined" && wasm_exports.web_set_speed) {
+      wasm_exports.web_set_speed(value);
+    }
+  }
+
+  function applyRevelation() {
+    if (!revelationInput) return;
+    const value = parseFloat(revelationInput.value);
+    if (revelationValue) revelationValue.textContent = value.toFixed(2);
+    if (typeof wasm_exports !== "undefined" && wasm_exports.web_set_revelation) {
+      wasm_exports.web_set_revelation(value);
+    }
+  }
+
+  if (speedInput) speedInput.addEventListener("input", applySpeed);
+  if (revelationInput) revelationInput.addEventListener("input", applyRevelation);
+
+  // The module instantiation is asynchronous, so seed the initial slider
+  // values as soon as wasm_exports exists.
+  const settingsTimer = setInterval(function () {
+    if (typeof wasm_exports === "undefined") return;
+    clearInterval(settingsTimer);
+    applySpeed();
+    applyRevelation();
+  }, 100);
 })();
 """
 
