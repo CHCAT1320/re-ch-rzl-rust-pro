@@ -99,20 +99,11 @@ jobs:
             release/re-ch-rzl-rust-web-multifile.zip
             release/re-ch-rzl-rust-web-single.zip
           )
-          if gh release view "$tag" >/dev/null 2>&1; then
-            # Keep the asset list in sync: --clobber only replaces same-named
-            # files, so assets from earlier naming schemes would pile up.
-            keep=$(printf '%s\n' "${assets[@]}" | xargs -n1 basename)
-            gh release view "$tag" --json assets --jq '.assets[].name' | while IFS= read -r name; do
-              if ! printf '%s\n' "$keep" | grep -Fqx -- "$name"; then
-                echo "removing stale asset: $name"
-                gh release delete-asset "$tag" "$name" --yes
-              fi
-            done
-            gh release upload "$tag" "${assets[@]}" --clobber
-          else
-            notes=$(mktemp)
-            cat <<'EOF' > "$notes"
+          assets_block=$(mktemp)
+          changes_block=$(mktemp)
+          notes=$(mktemp)
+
+          cat > "$assets_block" <<'EOF'
           ## 资源
 
           | 文件 | 平台 |
@@ -128,14 +119,34 @@ jobs:
           解压后运行；macOS 若用 Finder 解压可能丢失可执行位，建议命令行 `unzip`。字体与打击音已内嵌，仅需自备谱面和音乐。
 
           web 单文件版可直接用浏览器打开，但需要通过 HTTP 访问，`file://` 无法加载 wasm。
-
-          ## 变更
-
           EOF
+
+          {
+            printf '%s\n\n' '## 变更'
             gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
               -f tag_name="$tag" -f target_commitish="${GITHUB_SHA}" \
-              --jq .body >> "$notes" 2>/dev/null \
-              || echo "_暂无可自动生成的变更记录_" >> "$notes"
+              --jq .body 2>/dev/null || printf '%s\n' '_暂无可自动生成的变更记录_'
+          } > "$changes_block"
 
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # Only the marked regions are rewritten, so hand-written text in the
+            # draft survives while the asset list and changelog stay current.
+            gh release view "$tag" --json body --jq .body > "$notes"
+            python3 .github/scripts/update_release_body.py "$notes" "$assets_block" "$changes_block"
+            gh release edit "$tag" --notes-file "$notes"
+
+            # --clobber only replaces same-named files, so assets from earlier
+            # naming schemes would pile up; drop anything not in the list.
+            keep=$(printf '%s\n' "${assets[@]}" | xargs -n1 basename)
+            gh release view "$tag" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              if ! printf '%s\n' "$keep" | grep -Fqx -- "$name"; then
+                echo "removing stale asset: $name"
+                gh release delete-asset "$tag" "$name" --yes
+              fi
+            done
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            : > "$notes"
+            python3 .github/scripts/update_release_body.py "$notes" "$assets_block" "$changes_block"
             gh release create "$tag" --draft --title "$tag" --notes-file "$notes" "${assets[@]}"
           fi
