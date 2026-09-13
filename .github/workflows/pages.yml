@@ -1,0 +1,80 @@
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/scripts/build_web.py'
+      - '.github/scripts/subset_font.py'
+      - '.github/actions/subset-font/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# GitHub Pages must be switched to "GitHub Actions" as the source in the repo
+# settings once; after that this workflow publishes on every master push.
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Subset font
+        uses: ./.github/actions/subset-font
+
+      - name: Build wasm
+        run: cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
+
+      - name: Package web
+        run: |
+          python3 .github/scripts/build_web.py \
+            --wasm target/wasm32-unknown-unknown/release/re-ch-rzl-rust.wasm \
+            --out dist/web
+
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp -r dist/web/multifile/. site/
+          # Keep the self-contained single-file build downloadable as well.
+          cp dist/web/single/re-ch-rzl-rust.html site/single.html
+          touch site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

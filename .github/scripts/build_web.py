@@ -87,11 +87,11 @@ INDEX_HTML = """<!DOCTYPE html>
 </div>
 <div id="settings">
   <label>SPEED
-    <input id="speed" type="range" min="1" max="20" step="0.1" value="7">
+    <input id="speed" type="range" min="1" max="10" step="0.1" value="7">
     <span class="val" id="speed-val">7.0</span>
   </label>
   <label>揭秘缩放
-    <input id="revelation" type="range" min="0.2" max="2" step="0.01" value="1">
+    <input id="revelation" type="range" min="0.1" max="2" step="0.01" value="1">
     <span class="val" id="revelation-val">1.00</span>
   </label>
 </div>
