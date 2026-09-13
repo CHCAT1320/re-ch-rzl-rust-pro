@@ -34,6 +34,57 @@ jobs:
   ios:
     uses: ./.github/workflows/build-ios.yml
 
+  # Publishes the web build that the `web` job just uploaded to GitHub Pages.
+  # Running as a job inside this workflow (instead of a workflow_run workflow)
+  # keeps it on the same graph and guarantees it only reacts to this run's own
+  # artifacts, never to a superseded run. Needs Pages source = "GitHub Actions".
+  pages:
+    needs: [web]
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download multifile web build
+        uses: actions/download-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-multifile
+          path: site
+
+      - name: Download single-file web build
+        uses: actions/download-artifact@v6
+        with:
+          name: re-ch-rzl-rust-web-single
+          path: single
+
+      - name: Assemble site
+        run: |
+          cp single/re-ch-rzl-rust.html site/single.html
+          touch site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Enable Pages with the GitHub Actions source on the first run instead
+          # of failing until it is switched on manually in the repo settings.
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   release:
     # Tag pushes and manual runs with a tag publish; manual runs without one
     # only build artifacts. Branch pushes keep a rolling draft up to date.

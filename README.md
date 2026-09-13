@@ -60,7 +60,7 @@ Web 版需要 **WebGL2**：挑战过渡用离屏 RenderTarget 合成，miniquad 
 
 GitHub Actions 的 `Build Web` 工作流会构建并上传 `re-ch-rzl-rust-web-multifile` 和 `re-ch-rzl-rust-web-single` 两个产物。
 
-`pages.yml` 不重复编译：它等 `Build` 工作流跑完后，直接下载那一轮已上传的 `re-ch-rzl-rust-web-multifile` / `-web-single` 产物，把多文件版部署到 **GitHub Pages**（单文件版额外放在 `/single.html`）。首次使用需要在仓库 `Settings → Pages` 里把 Source 设为 `GitHub Actions`。
+`build.yml` 里的 `pages` job 在 `web` job 完成后，用同一轮已上传的 `re-ch-rzl-rust-web-multifile` / `-web-single` 产物把多文件版部署到 **GitHub Pages**（单文件版额外放在 `/single.html`），不重复编译，且和 web 在同一张流程图里。首次使用需要在仓库 `Settings → Pages` 里把 Source 设为 `GitHub Actions`。
 
 ## 构建
 
@@ -76,8 +76,7 @@ build-macos.yml     macOS 通用二进制
 build-linux.yml     Linux x86_64
 build-web.yml       web 多文件版 + 单文件版
 build-ios.yml       iOS ipa（未签名）
-build.yml           调用上面几个，并汇总成一个 release 草稿
-pages.yml           把 web 多文件版部署到 GitHub Pages
+build.yml           调用上面几个，汇总成 release 草稿，并把 web 部署到 GitHub Pages
 ```
 
 每个平台工作流也支持单独 `workflow_dispatch`。另外 `commit-diff-image.yml` 负责生成提交差异图。
