@@ -71,13 +71,15 @@ cargo build --release
 构建按平台拆成可复用工作流，由 `build.yml` 统一编排：
 
 ```text
-build-windows.yml   Windows exe
+build-windows.yml   Windows x86_64 / i686(32 位) / ARM64 exe
 build-macos.yml     macOS 通用二进制
-build-linux.yml     Linux x86_64
+build-linux.yml     Linux x86_64 / ARM64
 build-web.yml       web 多文件版 + 单文件版
-build-ios.yml       iOS ipa（未签名）
+build-ios.yml       iOS ipa arm64（未签名）+ 模拟器通用 app
 build.yml           调用上面几个，汇总成 release 草稿，并把 web 部署到 GitHub Pages
 ```
+
+Windows ARM64 与 Linux ARM64 用 GitHub 的原生 arm runner（`windows-11-arm` / `ubuntu-24.04-arm`）直接编译，不依赖交叉工具链。`build-windows.yml` / `build-linux.yml` 用 matrix 出多个架构，产物名带架构后缀。
 
 每个平台工作流也支持单独 `workflow_dispatch`。另外 `commit-diff-image.yml` 负责生成提交差异图。
 
@@ -94,10 +96,10 @@ build.yml           调用上面几个，汇总成 release 草稿，并把 web �
 
 iOS 的 `.app` 只是一个文件夹（cargo 二进制 + `Info.plist`），所以 CI 直接产出 `.ipa`，不需要 Xcode 工程。但构建未签名，装到设备前需要用 AltStore / Sideloadly 之类重签。
 
-`Build iOS` 同时产出一个模拟器版本 `re-ch-rzl-rust-ios-simulator.zip`（`lipo` 合成的 arm64 + x86_64 通用 `.app`），也会发布到 Release：
+`Build iOS` 同时产出一个模拟器版本 `re-ch-rzl-rust-ios-simulator-universal.zip`（`lipo` 合成的 arm64 + x86_64 通用 `.app`），也会发布到 Release：
 
 ```text
-unzip re-ch-rzl-rust-ios-simulator.zip
+unzip re-ch-rzl-rust-ios-simulator-universal.zip
 xcrun simctl install booted re-ch-rzl-rust.app
 xcrun simctl launch booted io.github.chcat1320.re-ch-rzl-rust
 ```
@@ -107,13 +109,16 @@ xcrun simctl launch booted io.github.chcat1320.re-ch-rzl-rust
 产物包含：
 
 ```text
-re-ch-rzl-rust-windows.zip          Windows（内含 re-ch-rzl-rust.exe）
-re-ch-rzl-rust-macos.zip            macOS 通用二进制（Intel + Apple Silicon）
-re-ch-rzl-rust-linux.zip            Linux x86_64
-re-ch-rzl-rust-ios.ipa              iOS 真机（未签名，需自行重签）
-re-ch-rzl-rust-ios-simulator.zip    iOS 模拟器（arm64 + x86_64 通用 app）
-re-ch-rzl-rust-web-multifile.zip    web 多文件版
-re-ch-rzl-rust-web-single.zip       web 单文件版（内含 re-ch-rzl-rust.html）
+re-ch-rzl-rust-windows-x86_64.zip            Windows x86_64（内含 re-ch-rzl-rust.exe）
+re-ch-rzl-rust-windows-i686.zip              Windows i686 32 位
+re-ch-rzl-rust-windows-aarch64.zip           Windows ARM64
+re-ch-rzl-rust-macos-universal.zip           macOS 通用二进制（Intel + Apple Silicon）
+re-ch-rzl-rust-linux-x86_64.zip              Linux x86_64
+re-ch-rzl-rust-linux-aarch64.zip             Linux ARM64
+re-ch-rzl-rust-ios-arm64.ipa                 iOS 真机 arm64（未签名，需自行重签）
+re-ch-rzl-rust-ios-simulator-universal.zip   iOS 模拟器（arm64 + x86_64 通用 app）
+re-ch-rzl-rust-web-multifile.zip             web 多文件版
+re-ch-rzl-rust-web-single.zip                web 单文件版（内含 re-ch-rzl-rust.html）
 ```
 
 **自动草稿**

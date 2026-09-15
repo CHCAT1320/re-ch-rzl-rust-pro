@@ -57,15 +57,15 @@ jobs:
           </dict>
           </plist>
           PLIST
-          zip -q -r re-ch-rzl-rust-ios.ipa Payload
-          ls -l re-ch-rzl-rust-ios.ipa
-          unzip -l re-ch-rzl-rust-ios.ipa
+          zip -q -r re-ch-rzl-rust-ios-arm64.ipa Payload
+          ls -l re-ch-rzl-rust-ios-arm64.ipa
+          unzip -l re-ch-rzl-rust-ios-arm64.ipa
 
       - name: Upload ipa
         uses: actions/upload-artifact@v6
         with:
-          name: re-ch-rzl-rust-ios
-          path: re-ch-rzl-rust-ios.ipa
+          name: re-ch-rzl-rust-ios-arm64
+          path: re-ch-rzl-rust-ios-arm64.ipa
           if-no-files-found: error
 
       # Simulator build: a universal .app (Apple Silicon + Intel simulator) that
@@ -85,12 +85,12 @@ jobs:
             -output "sim/$app/re-ch-rzl-rust"
           chmod +x "sim/$app/re-ch-rzl-rust"
           lipo -archs "sim/$app/re-ch-rzl-rust"
-          ( cd sim && zip -q -r ../re-ch-rzl-rust-ios-simulator.zip "$app" )
-          unzip -l re-ch-rzl-rust-ios-simulator.zip
+          ( cd sim && zip -q -r ../re-ch-rzl-rust-ios-simulator-universal.zip "$app" )
+          unzip -l re-ch-rzl-rust-ios-simulator-universal.zip
 
       - name: Upload simulator app
         uses: actions/upload-artifact@v6
         with:
-          name: re-ch-rzl-rust-ios-simulator
-          path: re-ch-rzl-rust-ios-simulator.zip
+          name: re-ch-rzl-rust-ios-simulator-universal
+          path: re-ch-rzl-rust-ios-simulator-universal.zip
           if-no-files-found: error

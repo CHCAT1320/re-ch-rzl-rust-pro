@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Refresh the auto-generated sections of a release body in place.
+"""Refresh the auto-generated asset section of a release body in place.
 
-The body keeps anything written by hand; only the regions between the markers
-are replaced, so the asset list and the generated changelog stay current
-without wiping manual edits. Missing markers are added on first use.
+Only the region between the asset markers is replaced, so anything written by
+hand survives each update. A legacy auto-generated changelog region (from when
+the body also carried generated release notes) is removed if it is still there.
 
 Usage:
-    python .github/scripts/update_release_body.py BODY_FILE ASSETS_FILE CHANGES_FILE
+    python .github/scripts/update_release_body.py BODY_FILE ASSETS_FILE
 """
 
 from __future__ import annotations
@@ -28,6 +28,15 @@ def replace_region(body: str, start: str, end: str, content: str) -> str | None:
     return f"{before}{start}\n{content.strip()}\n{end}{after}"
 
 
+def remove_region(body: str, start: str, end: str) -> str:
+    if start not in body or end not in body:
+        return body
+    before, rest = body.split(start, 1)
+    _, after = rest.split(end, 1)
+    parts = [part.strip() for part in (before, after) if part.strip()]
+    return "\n\n".join(parts)
+
+
 def ensure_region(body: str, start: str, end: str, content: str, prepend: bool) -> str:
     replaced = replace_region(body, start, end, content)
     if replaced is not None:
@@ -42,11 +51,10 @@ def ensure_region(body: str, start: str, end: str, content: str, prepend: bool) 
 def main() -> None:
     body_path = pathlib.Path(sys.argv[1])
     assets = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
-    changes = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 
     body = body_path.read_text(encoding="utf-8") if body_path.exists() else ""
+    body = remove_region(body, CHANGES_START, CHANGES_END)
     body = ensure_region(body, ASSETS_START, ASSETS_END, assets, prepend=True)
-    body = ensure_region(body, CHANGES_START, CHANGES_END, changes, prepend=False)
 
     body_path.write_text(body.rstrip() + "\n", encoding="utf-8")
 

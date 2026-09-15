@@ -107,12 +107,15 @@ jobs:
       - name: Package assets
         run: |
           mkdir -p release
-          # One zip per platform so every asset has an extension. Info-ZIP
+          # One zip per platform/arch so every asset has an extension. Info-ZIP
           # records Unix permissions, so unzip restores the executable bit.
           for name in \
-            re-ch-rzl-rust-windows \
-            re-ch-rzl-rust-macos \
-            re-ch-rzl-rust-linux \
+            re-ch-rzl-rust-windows-x86_64 \
+            re-ch-rzl-rust-windows-i686 \
+            re-ch-rzl-rust-windows-aarch64 \
+            re-ch-rzl-rust-macos-universal \
+            re-ch-rzl-rust-linux-x86_64 \
+            re-ch-rzl-rust-linux-aarch64 \
             re-ch-rzl-rust-web-multifile \
             re-ch-rzl-rust-web-single
           do
@@ -122,9 +125,9 @@ jobs:
             )
           done
           # The iOS artifacts are already archives, ship them as-is.
-          cp dist/re-ch-rzl-rust-ios/re-ch-rzl-rust-ios.ipa release/re-ch-rzl-rust-ios.ipa
-          cp dist/re-ch-rzl-rust-ios-simulator/re-ch-rzl-rust-ios-simulator.zip \
-             release/re-ch-rzl-rust-ios-simulator.zip
+          cp dist/re-ch-rzl-rust-ios-arm64/re-ch-rzl-rust-ios-arm64.ipa release/
+          cp dist/re-ch-rzl-rust-ios-simulator-universal/re-ch-rzl-rust-ios-simulator-universal.zip \
+             release/
           ls -l release
 
       - name: Publish draft release
@@ -142,16 +145,18 @@ jobs:
           fi
           echo "release tag: $tag"
           assets=(
-            release/re-ch-rzl-rust-windows.zip
-            release/re-ch-rzl-rust-macos.zip
-            release/re-ch-rzl-rust-linux.zip
-            release/re-ch-rzl-rust-ios.ipa
-            release/re-ch-rzl-rust-ios-simulator.zip
+            release/re-ch-rzl-rust-windows-x86_64.zip
+            release/re-ch-rzl-rust-windows-i686.zip
+            release/re-ch-rzl-rust-windows-aarch64.zip
+            release/re-ch-rzl-rust-macos-universal.zip
+            release/re-ch-rzl-rust-linux-x86_64.zip
+            release/re-ch-rzl-rust-linux-aarch64.zip
+            release/re-ch-rzl-rust-ios-arm64.ipa
+            release/re-ch-rzl-rust-ios-simulator-universal.zip
             release/re-ch-rzl-rust-web-multifile.zip
             release/re-ch-rzl-rust-web-single.zip
           )
           assets_block=$(mktemp)
-          changes_block=$(mktemp)
           notes=$(mktemp)
 
           cat > "$assets_block" <<'EOF'
@@ -159,11 +164,14 @@ jobs:
 
           | 文件 | 平台 |
           | --- | --- |
-          | `re-ch-rzl-rust-windows.zip` | Windows（内含 exe） |
-          | `re-ch-rzl-rust-macos.zip` | macOS 通用二进制（Intel + Apple Silicon） |
-          | `re-ch-rzl-rust-linux.zip` | Linux x86_64 |
-          | `re-ch-rzl-rust-ios.ipa` | iOS 真机（未签名，需自行重签后才能装到设备） |
-          | `re-ch-rzl-rust-ios-simulator.zip` | iOS 模拟器（arm64 + x86_64 通用 app） |
+          | `re-ch-rzl-rust-windows-x86_64.zip` | Windows x86_64（64 位，内含 exe） |
+          | `re-ch-rzl-rust-windows-i686.zip` | Windows i686（32 位，内含 exe） |
+          | `re-ch-rzl-rust-windows-aarch64.zip` | Windows ARM64（内含 exe） |
+          | `re-ch-rzl-rust-macos-universal.zip` | macOS 通用二进制（Intel + Apple Silicon） |
+          | `re-ch-rzl-rust-linux-x86_64.zip` | Linux x86_64 |
+          | `re-ch-rzl-rust-linux-aarch64.zip` | Linux ARM64 |
+          | `re-ch-rzl-rust-ios-arm64.ipa` | iOS 真机 arm64（未签名，需自行重签后才能装到设备） |
+          | `re-ch-rzl-rust-ios-simulator-universal.zip` | iOS 模拟器（arm64 + x86_64 通用 app） |
           | `re-ch-rzl-rust-web-multifile.zip` | web 多文件版 |
           | `re-ch-rzl-rust-web-single.zip` | web 单文件版（内含 html） |
 
@@ -172,18 +180,11 @@ jobs:
           web 单文件版可直接用浏览器打开，但需要通过 HTTP 访问，`file://` 无法加载 wasm。
           EOF
 
-          {
-            printf '%s\n\n' '## 变更'
-            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-              -f tag_name="$tag" -f target_commitish="${GITHUB_SHA}" \
-              --jq .body 2>/dev/null || printf '%s\n' '_暂无可自动生成的变更记录_'
-          } > "$changes_block"
-
           if gh release view "$tag" >/dev/null 2>&1; then
-            # Only the marked regions are rewritten, so hand-written text in the
-            # draft survives while the asset list and changelog stay current.
+            # Only the marked asset region is rewritten, so hand-written text in
+            # the draft survives while the asset list stays current.
             gh release view "$tag" --json body --jq .body > "$notes"
-            python3 .github/scripts/update_release_body.py "$notes" "$assets_block" "$changes_block"
+            python3 .github/scripts/update_release_body.py "$notes" "$assets_block"
             gh release edit "$tag" --notes-file "$notes"
 
             # --clobber only replaces same-named files, so assets from earlier
@@ -198,6 +199,6 @@ jobs:
             gh release upload "$tag" "${assets[@]}" --clobber
           else
             : > "$notes"
-            python3 .github/scripts/update_release_body.py "$notes" "$assets_block" "$changes_block"
+            python3 .github/scripts/update_release_body.py "$notes" "$assets_block"
             gh release create "$tag" --draft --title "$tag" --notes-file "$notes" "${assets[@]}"
           fi

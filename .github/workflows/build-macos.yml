@@ -38,6 +38,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: re-ch-rzl-rust-macos
+          name: re-ch-rzl-rust-macos-universal
           path: out/re-ch-rzl-rust
           if-no-files-found: error
