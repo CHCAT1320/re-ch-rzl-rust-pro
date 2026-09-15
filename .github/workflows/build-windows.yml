@@ -16,9 +16,6 @@ jobs:
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             arch: x86_64
-          - runner: windows-latest
-            target: i686-pc-windows-msvc
-            arch: i686
           # Native Windows on Arm runner: no ARM64 MSVC cross toolchain needed.
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc

@@ -71,7 +71,7 @@ cargo build --release
 构建按平台拆成可复用工作流，由 `build.yml` 统一编排：
 
 ```text
-build-windows.yml   Windows x86_64 / i686(32 位) / ARM64 exe
+build-windows.yml   Windows x86_64 / ARM64 exe
 build-macos.yml     macOS 通用二进制
 build-linux.yml     Linux x86_64 / ARM64
 build-web.yml       web 多文件版 + 单文件版
@@ -110,7 +110,6 @@ xcrun simctl launch booted io.github.chcat1320.re-ch-rzl-rust
 
 ```text
 re-ch-rzl-rust-windows-x86_64.zip            Windows x86_64（内含 re-ch-rzl-rust.exe）
-re-ch-rzl-rust-windows-i686.zip              Windows i686 32 位
 re-ch-rzl-rust-windows-aarch64.zip           Windows ARM64
 re-ch-rzl-rust-macos-universal.zip           macOS 通用二进制（Intel + Apple Silicon）
 re-ch-rzl-rust-linux-x86_64.zip              Linux x86_64

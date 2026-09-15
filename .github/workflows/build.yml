@@ -111,7 +111,6 @@ jobs:
           # records Unix permissions, so unzip restores the executable bit.
           for name in \
             re-ch-rzl-rust-windows-x86_64 \
-            re-ch-rzl-rust-windows-i686 \
             re-ch-rzl-rust-windows-aarch64 \
             re-ch-rzl-rust-macos-universal \
             re-ch-rzl-rust-linux-x86_64 \
@@ -146,7 +145,6 @@ jobs:
           echo "release tag: $tag"
           assets=(
             release/re-ch-rzl-rust-windows-x86_64.zip
-            release/re-ch-rzl-rust-windows-i686.zip
             release/re-ch-rzl-rust-windows-aarch64.zip
             release/re-ch-rzl-rust-macos-universal.zip
             release/re-ch-rzl-rust-linux-x86_64.zip
@@ -165,7 +163,6 @@ jobs:
           | 文件 | 平台 |
           | --- | --- |
           | `re-ch-rzl-rust-windows-x86_64.zip` | Windows x86_64（64 位，内含 exe） |
-          | `re-ch-rzl-rust-windows-i686.zip` | Windows i686（32 位，内含 exe） |
           | `re-ch-rzl-rust-windows-aarch64.zip` | Windows ARM64（内含 exe） |
           | `re-ch-rzl-rust-macos-universal.zip` | macOS 通用二进制（Intel + Apple Silicon） |
           | `re-ch-rzl-rust-linux-x86_64.zip` | Linux x86_64 |
