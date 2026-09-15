@@ -270,9 +270,9 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
 
 fn draw_shui_yin() {
     let (base_font, text) = if revelation_size() >= 1.0 {
-        (24.0 * screen_radio_w(), "CH-RZL-RUST PLAYER VERSION 0.1.0 ALL CODE BY CHCAT1320")
+        (24.0 * screen_radio_w(), "CH-RZL-RUST PLAYER VERSION 0.1.3 ALL CODE BY CHCAT1320")
     } else {
-        (18.0 * screen_radio_w(), "CHART REVELATION : CH-RZL-RUST PLAYER VERSION 0.1.0 ALL CODE BY CHCAT1320")
+        (18.0 * screen_radio_w(), "CHART REVELATION : CH-RZL-RUST PLAYER VERSION 0.1.3 ALL CODE BY CHCAT1320")
     };
     let max_w = render_w() as f64 * 0.97;
     let base_dim = measure_text(text, None, base_font as u16, 1.0);
