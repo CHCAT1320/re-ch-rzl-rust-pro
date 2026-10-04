@@ -7,11 +7,16 @@
 //! does not provide.
 
 use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 thread_local! {
     static CHART_BYTES: RefCell<Option<Vec<u8>>> = RefCell::new(None);
     static MUSIC_READY: Cell<bool> = Cell::new(false);
 }
+
+// The page's 游玩 checkbox. Read every frame, so toggling it restarts the run
+// in the other mode instead of needing a reload.
+static PLAY_MODE: AtomicBool = AtomicBool::new(true);
 
 // --- exports called from JavaScript -----------------------------------------
 
@@ -35,6 +40,15 @@ pub extern "C" fn web_set_music_ready() {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn web_set_play_mode(mode: u32) {
+    PLAY_MODE.store(mode != 0, Ordering::Relaxed);
+}
+
+pub fn play_mode() -> bool {
+    PLAY_MODE.load(Ordering::Relaxed)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn web_set_speed(value: f64) {
     crate::set_speed(value);
 }
@@ -51,6 +65,11 @@ unsafe extern "C" {
     fn js_sfx_play(kind: i32);
     fn js_music_play();
     fn js_music_position() -> f64;
+    fn js_music_duration() -> f64;
+}
+
+pub fn music_duration() -> f64 {
+    unsafe { js_music_duration() }
 }
 
 pub fn init_hit_sounds(tap: &[u8], drag: &[u8]) {

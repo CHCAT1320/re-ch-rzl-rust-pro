@@ -34,6 +34,9 @@ jobs:
   ios:
     uses: ./.github/workflows/build-ios.yml
 
+  android:
+    uses: ./.github/workflows/build-android.yml
+
   # Publishes the web build that the `web` job just uploaded to GitHub Pages.
   # Running as a job inside this workflow (instead of a workflow_run workflow)
   # keeps it on the same graph and guarantees it only reacts to this run's own
@@ -89,7 +92,7 @@ jobs:
     # Tag pushes and manual runs with a tag publish; manual runs without one
     # only build artifacts. Branch pushes keep a rolling draft up to date.
     if: github.event_name != 'workflow_dispatch' || inputs.tag != ''
-    needs: [windows, macos, linux, web, ios]
+    needs: [windows, macos, linux, web, ios, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -127,6 +130,7 @@ jobs:
           cp dist/re-ch-rzl-rust-ios-arm64/re-ch-rzl-rust-ios-arm64.ipa release/
           cp dist/re-ch-rzl-rust-ios-simulator-universal/re-ch-rzl-rust-ios-simulator-universal.zip \
              release/
+          cp dist/re-ch-rzl-rust-android-arm64/re-ch-rzl-rust-android-arm64.apk release/
           ls -l release
 
       - name: Publish draft release
@@ -134,12 +138,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           requested="${{ inputs.tag }}"
+          # The version in Cargo.toml drives the rolling draft tag, so bumping
+          # the crate version is all it takes to open the next draft.
+          version=$(awk -F'"' '/^\[package\]/{p=1} p && /^version/{print $2; exit}' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "could not read [package] version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "Cargo.toml version: $version"
           if [ -n "$requested" ]; then
             tag="$requested"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tag="${GITHUB_REF_NAME}"
           else
-            version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+            # `-draft` keeps the rolling draft from clashing with a real v$version tag.
             tag="v${version}-draft"
           fi
           echo "release tag: $tag"
@@ -151,6 +163,7 @@ jobs:
             release/re-ch-rzl-rust-linux-aarch64.zip
             release/re-ch-rzl-rust-ios-arm64.ipa
             release/re-ch-rzl-rust-ios-simulator-universal.zip
+            release/re-ch-rzl-rust-android-arm64.apk
             release/re-ch-rzl-rust-web-multifile.zip
             release/re-ch-rzl-rust-web-single.zip
           )
@@ -169,6 +182,7 @@ jobs:
           | `re-ch-rzl-rust-linux-aarch64.zip` | Linux ARM64 |
           | `re-ch-rzl-rust-ios-arm64.ipa` | iOS 真机 arm64（未签名，需自行重签后才能装到设备） |
           | `re-ch-rzl-rust-ios-simulator-universal.zip` | iOS 模拟器（arm64 + x86_64 通用 app） |
+          | `re-ch-rzl-rust-android-arm64.apk` | Android arm64 |
           | `re-ch-rzl-rust-web-multifile.zip` | web 多文件版 |
           | `re-ch-rzl-rust-web-single.zip` | web 单文件版（内含 html） |
 

@@ -1,7 +1,16 @@
 [package]
 name = "re-ch-rzl-rust"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2024"
+
+[lib]
+name = "re_ch_rzl_rust"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "re-ch-rzl-rust"
+path = "src/main.rs"
 
 [profile.release]
 strip = true
@@ -14,10 +23,19 @@ serde_json = "1.0"
 simd-json = "0.13"
 hound = "3.5"
 
+[patch.crates-io]
+miniquad = { path = "third_party/miniquad" }
+
 # rfd only has Windows/macOS/Linux/wasm backends. Desktop-only so the mobile
 # targets do not try to build a dialog backend that does not exist.
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))'.dependencies]
 rfd = "0.15"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+# sasa's cpal backend hangs on Android (no usable AAudio host config).
+# oboe is the Android backend and must be selected explicitly.
+sasa = { git = "https://github.com/Mivik/sasa.git", features = ["oboe"] }
 
 # UIDocumentPickerViewController is presented from Rust through objc2, so the
 # in-app file picker needs no Swift/Objective-C file.
@@ -32,3 +50,49 @@ objc2-ui-kit = { version = "0.3", features = [
     "UIWindow",
     "block2",
 ] }
+
+[package.metadata.android]
+use_aapt2 = true
+package = "io.github.chcat1320.rechrzl"
+apk_name = "re-ch-rzl-rust"
+build_targets = ["aarch64-linux-android"]
+java_sources = "android/java"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+has_code = true
+label = "re-ch-rzl-rust"
+theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+
+[[package.metadata.android.application.activity]]
+name = "io.github.chcat1320.rechrzl.MainActivity"
+orientation = "portrait"
+launch_mode = "singleTask"
+exported = true
+config_changes = "orientation|keyboardHidden|screenSize"
+
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.MAIN"]
+categories = ["android.intent.category.LAUNCHER"]
+
+[[package.metadata.android.application.activity.meta_data]]
+name = "android.app.lib_name"
+value = "re_ch_rzl_rust"
+
+[[package.metadata.android.queries.intent]]
+actions = ["android.intent.action.GET_CONTENT"]
+
+[[package.metadata.android.queries.intent.data]]
+mime_type = "*/*"
+
+# cargo-apk2 打 --release 必须签名。默认用本地 debug 证书，可装模拟器/调试机。
+# 上架或正式分发请用自己的密钥：设置环境变量
+#   CARGO_APK_RELEASE_KEYSTORE
+#   CARGO_APK_RELEASE_KEYSTORE_PASSWORD
+# 环境变量优先于下面的路径。
+[package.metadata.android.signing.release]
+path = "android/debug.keystore"
+keystore_password = "android"

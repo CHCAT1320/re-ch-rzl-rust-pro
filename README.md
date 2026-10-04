@@ -16,6 +16,8 @@ re-ch-rzl-rust [谱面.json] [音频.wav]
 | 参数 | 说明 |
 | --- | --- |
 | `--revelation 0.3` | 揭示缩放，默认 `1.0` |
+| `--play` | 键盘游玩，结算只打控制台 |
+| `--diff EZ/HD/IN` | 游玩判定档，默认 `IN` |
 | `--recorder` | 离线渲染视频 |
 | `--width` / `--height` / `--fps` | 录制分辨率和帧率 |
 | `--hwaccel` / `--no-hwaccel` | 是否使用硬件编码 |
@@ -26,10 +28,18 @@ re-ch-rzl-rust [谱面.json] [音频.wav]
 
 字体和命中音内嵌在 wasm 里，谱面和音乐在页面上手动上传。音频由页面内的 WebAudio 桥接处理，不使用 cpal。
 
+页面左下角的「游玩」勾选框切换判定游玩 / 自动播放，默认开启。游玩时键盘、触摸、鼠标都能打，判定窗口和移动端一致（默认 IN）。播放中途切换会重置谱面状态并从头重放。
+
 仓库里没有 `web/` 目录，`index.html`、`app.js`、miniquad 加载器和单文件版都由 `.github/scripts/build_web.py` 在构建时生成。
 
 ```text
-cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
+powershell -File scripts/build-web.ps1
+```
+
+或手动：
+
+```text
+cargo rustc --release --target wasm32-unknown-unknown --bin re-ch-rzl-rust -- -C link-arg=--allow-undefined
 python .github/scripts/build_web.py --wasm target/wasm32-unknown-unknown/release/re-ch-rzl-rust.wasm --out dist/web
 ```
 
@@ -76,6 +86,7 @@ build-macos.yml     macOS 通用二进制
 build-linux.yml     Linux x86_64 / ARM64
 build-web.yml       web 多文件版 + 单文件版
 build-ios.yml       iOS ipa arm64（未签名）+ 模拟器通用 app
+build-android.yml   Android arm64 apk
 build.yml           调用上面几个，汇总成 release 草稿，并把 web 部署到 GitHub Pages
 ```
 
@@ -90,7 +101,38 @@ Windows ARM64 与 Linux ARM64 用 GitHub 的原生 arm runner（`windows-11-arm`
 移动端没有命令行参数，谱面和音乐由用户手动选择：
 
 - iOS：App 内弹出系统文件选择器（`UIDocumentPickerViewController`）。先选谱面（`public.json`），再选音乐（`public.audio`）。选择器完全用 Rust + `objc2` 实现，不需要 Swift/Objective-C 文件；选中的文件通过 security-scoped URL 读取
-- Android：目前是扫描应用 Documents 目录的临时实现，还没有系统选择器（需要 Java/Kotlin Activity 壳）
+- Android：启动时弹出系统对话框选择「游玩 / 自动播放」，然后用系统文件选择器分别上传谱面和音乐
+
+### 本地打 Android APK
+
+需要 JDK、Android SDK、NDK，以及 `cargo-apk2`。Windows：
+
+```text
+powershell -File scripts/build-apk.ps1
+powershell -File scripts/build-apk.ps1 -Release
+```
+
+产物：`dist/android/re-ch-rzl-rust.apk`。
+
+APK 必须签名。默认会自动生成 `android/debug.keystore`（密码 `android`），可装模拟器和已开 USB 调试的真机。上架或正式分发请用自己的密钥：
+
+```text
+powershell -File scripts/build-apk.ps1 -Release -Keystore C:\keys\release.jks -Password 你的密码
+```
+
+或设置环境变量（优先于 `Cargo.toml` 里的 debug 证书）：
+
+```text
+$env:CARGO_APK_RELEASE_KEYSTORE = "C:\keys\release.jks"
+$env:CARGO_APK_RELEASE_KEYSTORE_PASSWORD = "你的密码"
+powershell -File scripts/build-apk.ps1 -Release
+```
+
+生成自己的密钥示例：
+
+```text
+keytool -genkeypair -keystore release.jks -alias release -keyalg RSA -keysize 2048 -validity 10000
+```
 
 录制功能在移动端不可用（依赖 ffmpeg 子进程）。
 
@@ -116,6 +158,7 @@ re-ch-rzl-rust-linux-x86_64.zip              Linux x86_64
 re-ch-rzl-rust-linux-aarch64.zip             Linux ARM64
 re-ch-rzl-rust-ios-arm64.ipa                 iOS 真机 arm64（未签名，需自行重签）
 re-ch-rzl-rust-ios-simulator-universal.zip   iOS 模拟器（arm64 + x86_64 通用 app）
+re-ch-rzl-rust-android-arm64.apk             Android arm64
 re-ch-rzl-rust-web-multifile.zip             web 多文件版
 re-ch-rzl-rust-web-single.zip                web 单文件版（内含 re-ch-rzl-rust.html）
 ```
@@ -125,8 +168,10 @@ re-ch-rzl-rust-web-single.zip                web 单文件版（内含 re-ch-rzl
 推送到 `master` 会自动创建或更新一个滚动草稿，tag 取 `Cargo.toml` 里的版本号：
 
 ```text
-v0.1.0-draft
+v0.1.4-draft
 ```
+
+改版本只需动 `Cargo.toml` 的 `[package] version`：画面水印里的版本号也取自这里（`env!("CARGO_PKG_VERSION")`），不会再和 Cargo.toml 对不上。
 
 草稿在发布前不会真正创建 git tag，tag、标题、说明、资产都能在 Releases 页面自行修改，改完点 Publish 即可。
 
@@ -135,11 +180,11 @@ v0.1.0-draft
 推 `v*` tag 会按该 tag 生成草稿：
 
 ```text
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
-也可以手动 Run workflow，在 `tag` 输入框填 `v0.1.0`；留空则只构建产物、不发 Release。
+也可以手动 Run workflow，在 `tag` 输入框填 `v0.1.4`；留空则只构建产物、不发 Release。
 
 已存在同名 Release 时只覆盖资产，不会改动你改过的标题和说明。
 

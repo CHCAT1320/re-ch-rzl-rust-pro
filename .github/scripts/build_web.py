@@ -48,7 +48,7 @@ INDEX_HTML = """<!DOCTYPE html>
     position: fixed; top: 8px; left: 8px; z-index: 10;
     color: #eee; font: 13px/1.4 system-ui, sans-serif;
   }
-  #uploader-toggle {
+  #uploader-toggle, #settings-toggle {
     padding: 6px 12px; cursor: pointer;
     border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px;
     background: rgba(0, 0, 0, 0.55); color: #eee;
@@ -62,17 +62,22 @@ INDEX_HTML = """<!DOCTYPE html>
   #uploader-panel label { display: flex; gap: 6px; align-items: center; }
   #upload-status { opacity: 0.8; }
   /* Bottom-left settings stay reachable while playing, so speed and reveal
-     scale can be tuned against the running chart. */
+     scale can be tuned against the running chart. Collapsed by default: any
+     panel would otherwise cover the letterboxed canvas on a phone. */
   #settings {
     position: fixed; bottom: 8px; left: 8px; z-index: 10;
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 8px 10px; border-radius: 6px;
-    background: rgba(0, 0, 0, 0.7); color: #eee;
-    font: 13px/1.4 system-ui, sans-serif;
+    color: #eee; font: 13px/1.4 system-ui, sans-serif;
   }
+  #settings-panel {
+    margin-bottom: 6px; padding: 8px 10px; border-radius: 6px;
+    display: flex; flex-direction: column; gap: 6px;
+    background: rgba(0, 0, 0, 0.7);
+  }
+  #settings-panel[hidden] { display: none; }
   #settings label { display: flex; gap: 6px; align-items: center; }
   #settings input[type="range"] { width: 140px; }
   #settings .val { min-width: 36px; text-align: right; opacity: 0.85; }
+  #play-hint { opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -86,14 +91,19 @@ INDEX_HTML = """<!DOCTYPE html>
   </div>
 </div>
 <div id="settings">
-  <label>SPEED
-    <input id="speed" type="range" min="1" max="10" step="0.1" value="7">
-    <span class="val" id="speed-val">7.0</span>
-  </label>
-  <label>揭秘缩放
-    <input id="revelation" type="range" min="0.1" max="2" step="0.01" value="1">
-    <span class="val" id="revelation-val">1.00</span>
-  </label>
+  <div id="settings-panel" hidden>
+    <label>SPEED
+      <input id="speed" type="range" min="1" max="10" step="0.1" value="7">
+      <span class="val" id="speed-val">7.0</span>
+    </label>
+    <label>揭秘缩放
+      <input id="revelation" type="range" min="0.1" max="2" step="0.01" value="1">
+      <span class="val" id="revelation-val">1.00</span>
+    </label>
+    <label>游玩 <input id="play-mode" type="checkbox" checked></label>
+    <span id="play-hint">开始前选择，键盘 / 触摸 / 鼠标</span>
+  </div>
+  <button id="settings-toggle" type="button">设置</button>
 </div>
 <script src="mq_js_bundle.js"></script>
 <script src="app.js"></script>
@@ -196,6 +206,15 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
     }
   };
 
+  importObject.env.js_music_duration = function () {
+    try {
+      return musicBuffer ? musicBuffer.duration : 0;
+    } catch (err) {
+      console.error("audio bridge error", err);
+      return 0;
+    }
+  };
+
   const chartInput = document.getElementById("chart-file");
   const musicInput = document.getElementById("music-file");
   const status = document.getElementById("upload-status");
@@ -214,9 +233,7 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
     if (chartLoaded && musicLoaded && panel) {
       panel.hidden = true;
     }
-  }
-
-  if (toggle && panel) {
+  }  if (toggle && panel) {
     toggle.addEventListener("click", () => {
       panel.hidden = !panel.hidden;
     });
@@ -253,6 +270,7 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
         musicLoaded = true;
         setStatus("music: " + file.name);
         collapseWhenReady();
+        lockPlayMode();
       } catch (err) {
         console.error("music load failed", err);
         setStatus("music failed: " + err);
@@ -288,6 +306,37 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
   if (speedInput) speedInput.addEventListener("input", applySpeed);
   if (revelationInput) revelationInput.addEventListener("input", applyRevelation);
 
+  // 游玩/自动播放. It is a start-time choice: the wasm reads it once when the
+  // run begins, so it is locked the moment the music is loaded. Repeating the
+  // toggle used to restart the run and left the audio duplicated.
+  const playInput = document.getElementById("play-mode");
+  const playHint = document.getElementById("play-hint");
+  const settingsToggle = document.getElementById("settings-toggle");
+  const settingsPanel = document.getElementById("settings-panel");
+
+  function applyPlayMode() {
+    if (!playInput || playInput.disabled) return;
+    if (typeof wasm_exports !== "undefined" && wasm_exports.web_set_play_mode) {
+      wasm_exports.web_set_play_mode(playInput.checked ? 1 : 0);
+    }
+  }
+
+  function lockPlayMode() {
+    if (playInput) playInput.disabled = true;
+    if (settingsPanel) settingsPanel.hidden = true;
+    if (playHint) {
+      playHint.textContent = playInput && playInput.checked ? "游玩中" : "自动播放";
+    }
+  }
+
+  if (playInput) playInput.addEventListener("change", applyPlayMode);
+
+  if (settingsToggle && settingsPanel) {
+    settingsToggle.addEventListener("click", () => {
+      settingsPanel.hidden = !settingsPanel.hidden;
+    });
+  }
+
   // The module instantiation is asynchronous, so seed the initial slider
   // values as soon as wasm_exports exists.
   const settingsTimer = setInterval(function () {
@@ -295,6 +344,7 @@ APP_JS = """// WebAudio bridge + file upload intake for the wasm build.
     clearInterval(settingsTimer);
     applySpeed();
     applyRevelation();
+    applyPlayMode();
   }, 100);
 })();
 """
@@ -320,6 +370,13 @@ def locked_miniquad_version(lock_path: pathlib.Path) -> str | None:
 
 
 def find_bundle(lock_path: pathlib.Path) -> pathlib.Path:
+    # miniquad is patched to third_party/miniquad for the Android audio/MTS
+    # fixes, so prefer the vendored copy: the registry one may not even be
+    # downloaded once the dependency is a path patch.
+    vendored = pathlib.Path("third_party/miniquad/js/gl.js")
+    if vendored.is_file():
+        return vendored
+
     cargo_home = pathlib.Path(os.environ.get("CARGO_HOME", pathlib.Path.home() / ".cargo"))
     src_root = cargo_home / "registry" / "src"
     version = locked_miniquad_version(lock_path)

@@ -11,3 +11,9 @@ lib.hpp
 .kilo
 .cargo
 /dist/
+/android/.gradle/
+/android/debug.keystore
+/android/debug.keystore.dname
+/android/release.jks
+/android/*.jks
+/android/*.keystore

@@ -1,0 +1,64 @@
+name: Build Android
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Subset font
+        uses: ./.github/actions/subset-font
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager --install "ndk;27.2.12479018"
+
+      - name: Install cargo-apk2
+        run: cargo install cargo-apk2 --locked
+
+      - name: Create debug keystore
+        run: |
+          mkdir -p android
+          keytool -genkeypair -keystore android/debug.keystore -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+        run: cargo apk2 build --lib --release
+
+      - name: Collect APK
+        run: |
+          set -eu
+          apk=$(find target -name '*.apk' | head -n 1)
+          test -n "$apk"
+          mkdir -p dist
+          cp "$apk" dist/re-ch-rzl-rust-android-arm64.apk
+          ls -l dist
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: re-ch-rzl-rust-android-arm64
+          path: dist/re-ch-rzl-rust-android-arm64.apk
+          if-no-files-found: error

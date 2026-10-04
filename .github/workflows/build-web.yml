@@ -25,7 +25,7 @@ jobs:
         uses: ./.github/actions/subset-font
 
       - name: Build wasm
-        run: cargo rustc --release --target wasm32-unknown-unknown -- -C link-arg=--allow-undefined
+        run: cargo rustc --release --target wasm32-unknown-unknown --bin re-ch-rzl-rust -- -C link-arg=--allow-undefined
 
       - name: Package web
         run: |

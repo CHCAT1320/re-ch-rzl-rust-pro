@@ -1,15 +1,18 @@
-﻿#![windows_subsystem = "console"]
-
-mod chart;
+﻿mod chart;
 mod ease;
+mod play;
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_os = "ios")]
 mod ios;
+#[cfg(target_os = "android")]
+mod android;
 
 use macroquad::prelude::*;
 use chart::Chart;
-use sasa::{AudioManager, PlaySfxParams, Sfx, backend::cpal::{CpalBackend, CpalSettings}};
+use sasa::{AudioManager, PlaySfxParams, Sfx, backend::cpal::CpalSettings};
+#[cfg(not(target_os = "android"))]
+use sasa::backend::cpal::CpalBackend;
 use sasa::AudioClip;
 use sasa::MusicParams;
 use std::cell::{Cell, RefCell};
@@ -64,7 +67,7 @@ pub fn set_speed(value: f64) {
     }
 }
 
-fn render_w() -> f32 {
+pub fn render_w() -> f32 {
     let rw = RENDER_WIDTH.with(|c| c.get());
     if rw > 0.0 {
         rw
@@ -73,7 +76,7 @@ fn render_w() -> f32 {
     }
 }
 
-fn render_h() -> f32 {
+pub fn render_h() -> f32 {
     let rh = RENDER_HEIGHT.with(|c| c.get());
     if rh > 0.0 {
         rh
@@ -90,7 +93,7 @@ fn screen_radio_h() -> f64 {
     render_h() as f64 / 1280.0
 }
 
-fn scale_x() -> f64 {
+pub fn scale_x() -> f64 {
     revelation_size() * screen_radio_w()
 }
 
@@ -98,7 +101,7 @@ fn scale_y() -> f64 {
     revelation_size() * screen_radio_h()
 }
 
-fn center_x() -> f64 {
+pub fn center_x() -> f64 {
     360.0 * screen_radio_w()
 }
 
@@ -110,7 +113,7 @@ fn window_conf() -> Conf {
         fullscreen: false,
         window_resizable: true,
         high_dpi: false,
-        sample_count: 16,
+        sample_count: if cfg!(target_os = "android") { 0 } else { 16 },
         platform: macroquad::miniquad::conf::Platform {
             // Render targets need WebGL2: miniquad's MSAA resolve uses
             // glReadBuffer and READ/DRAW_FRAMEBUFFER, which do not exist in
@@ -132,8 +135,14 @@ fn update_fps(display_fps: &mut i32, last_update: &mut f64) {
     }
 }
 
-fn floor_y() -> f64 {
-    1040.0 * screen_radio_h()
+// 判定线的设计坐标（720x1280 设计空间）。取自原游戏场景 level6：
+// LinesGroups（线/判定环的容器）世界坐标 y = -2.4，主相机为正交、size = 5，
+// 可见世界范围 y ∈ [-5, 5]，所以判定线在屏幕高度的 (5 + 2.4) / 10 = 74% 处，
+// 即 1280 * 0.74 = 947.2。
+pub const FLOOR_DESIGN_Y: f64 = 947.2;
+
+pub fn floor_y() -> f64 {
+    FLOOR_DESIGN_Y * screen_radio_h()
 }
 
 fn draw_scaled_range() {
@@ -141,13 +150,13 @@ fn draw_scaled_range() {
         return;
     }
     let x = 360.0 * screen_radio_w() * (1.0 - revelation_size());
-    let y = 1040.0 * screen_radio_h() * (1.0 - revelation_size());
+    let y = FLOOR_DESIGN_Y * screen_radio_h() * (1.0 - revelation_size());
     let w = 720.0 * scale_x();
     let h = 1280.0 * scale_y();
     draw_rectangle_lines(x as f32, y as f32, w as f32, h as f32, 2.0, RED);
 }
 
-fn calculate_combo(comb: i32) -> i32 {
+pub fn calculate_combo(comb: i32) -> i32 {
     if comb == 0 {
         0
     } else if comb <= 5 {
@@ -203,8 +212,7 @@ fn draw_text(text: &str, x: f32, y: f32, font_size: f32, color: Color) {
     draw_text_outlined(text, x, y, font_size, color, BLACK, (font_size * 0.05).max(1.0));
 }
 
-fn draw_combo(chart: &Chart) {
-    let combo = calculate_combo(count_hits(chart));
+fn draw_combo(combo: i32) {
     if combo == 0 {
         return;
     }
@@ -269,23 +277,25 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
 }
 
 fn draw_shui_yin() {
-    let (base_font, text) = if revelation_size() >= 1.0 {
-        (24.0 * screen_radio_w(), "CH-RZL-RUST PLAYER VERSION 0.1.3 ALL CODE BY CHCAT1320")
-    } else {
-        (18.0 * screen_radio_w(), "CHART REVELATION : CH-RZL-RUST PLAYER VERSION 0.1.3 ALL CODE BY CHCAT1320")
-    };
+    // Single source of truth: the version in Cargo.toml, which is also what the
+    // release workflow turns into the draft tag.
+    let version = env!("CARGO_PKG_VERSION");
+    let compact = revelation_size() >= 1.0;
+    let base_font = if compact { 24.0 } else { 18.0 } * screen_radio_w();
+    let prefix = if compact { "" } else { "CHART REVELATION : " };
+    let text = format!("{prefix}CH-RZL-RUST PLAYER VERSION {version} ALL CODE BY CHCAT1320");
     let max_w = render_w() as f64 * 0.97;
-    let base_dim = measure_text(text, None, base_font as u16, 1.0);
+    let base_dim = measure_text(&text, None, base_font as u16, 1.0);
     let font_size = if base_dim.width as f64 > max_w {
         base_font * (max_w / base_dim.width as f64)
     } else {
         base_font
     };
-    let dim = measure_text(text, None, font_size as u16, 1.0);
+    let dim = measure_text(&text, None, font_size as u16, 1.0);
     let tx = (center_x() - dim.width as f64 / 2.0) as f32;
     let ty = (700.0 * screen_radio_h() + dim.offset_y as f64 - dim.height as f64 / 2.0) as f32;
     let thickness = (1.0 * screen_radio_w()) as f32;
-    draw_text_outlined(text, tx, ty, font_size as f32, WHITE, BLACK, thickness);
+    draw_text_outlined(&text, tx, ty, font_size as f32, WHITE, BLACK, thickness);
 }
 
 fn speed_ratio() -> f64 {
@@ -370,7 +380,7 @@ fn default_note_color() -> chart::Color {
 
 // 返回参考实现中的 lastThemeIndex：只有挑战完全激活时才切换全局主题。
 // 进入/退出阶段由 draw_challenge_time 的遮罩负责，不应让所有 note 瞬间变色。
-fn find_active_challenge_theme_index(chart: &Chart, time: f64) -> Option<usize> {
+pub fn find_active_challenge_theme_index(chart: &Chart, time: f64) -> Option<usize> {
     let mut active = None;
     for (idx, ct) in chart.challenge_times.iter().enumerate() {
         let start_secs = chart.tick_to_seconds(ct.start);
@@ -599,7 +609,7 @@ fn speed_to_fp(seconds: f64, speed_key_points: &[chart::KeyPoint], chart: &Chart
     current.floor_position + dt * current.value
 }
 
-fn find_canvas_move(chart: &Chart, time: f64, index: i32) -> [f64; 2] {
+pub fn find_canvas_move(chart: &Chart, time: f64, index: i32) -> [f64; 2] {
     let canvas_moves = &chart.canvas_moves;
     let canvas_move = &canvas_moves[index as usize];
     let canvas_x_positions_key_points = &canvas_move.x_position_key_points;
@@ -609,7 +619,7 @@ fn find_canvas_move(chart: &Chart, time: f64, index: i32) -> [f64; 2] {
     [x, fp]
 }
 
-fn find_canmera_move(chart: &Chart, time: f64) -> [f64; 2] {
+pub fn find_canmera_move(chart: &Chart, time: f64) -> [f64; 2] {
     let camera_moves = &chart.camera_move;
     let camera_x_positions_key_points = &camera_moves.x_position_key_points;
     let camera_scale_key_points = &camera_moves.scale_key_points;
@@ -621,7 +631,7 @@ fn find_canmera_move(chart: &Chart, time: f64) -> [f64; 2] {
 // 二分查找给定秒数所在的线段，返回 (line_point_idx, next_line_point_idx)
 // idx1 是时间 <= secs 的最大线点；idx2 是时间 > secs 的最小线点
 // 越界时退回到首/末线点（idx1 == idx2）
-fn find_line_segment(line_points: &[chart::LinePoint], secs: f64, chart: &Chart) -> (usize, usize) {
+pub fn find_line_segment(line_points: &[chart::LinePoint], secs: f64, chart: &Chart) -> (usize, usize) {
     if line_points.is_empty() {
         return (0, 0);
     }
@@ -733,6 +743,31 @@ fn chart_color_to_macroquad(c: &chart::Color) -> macroquad::prelude::Color {
     macroquad::prelude::Color::new(c.r as f32 / 255.0, c.g as f32 / 255.0, c.b as f32 / 255.0, c.a as f32 / 255.0)
 }
 
+fn chart_color_to_macroquad_alpha(c: &chart::Color, alpha: f32) -> macroquad::prelude::Color {
+    let mut color = chart_color_to_macroquad(c);
+    color.a *= alpha;
+    color
+}
+
+fn black_alpha(alpha: f32) -> macroquad::prelude::Color {
+    macroquad::prelude::Color::new(0.0, 0.0, 0.0, alpha)
+}
+
+fn white_alpha(alpha: f32) -> macroquad::prelude::Color {
+    macroquad::prelude::Color::new(1.0, 1.0, 1.0, alpha)
+}
+
+// 原作 miss 走池化 prefab 的消失动画；这里用整体淡出等价还原。
+const NOTE_MISS_FADE: f64 = 0.25;
+
+fn note_fade(note: &chart::Note, time: f64) -> f32 {
+    if note.missed_at <= 0.0 {
+        return 1.0;
+    }
+    let progress = ((time - note.missed_at) / NOTE_MISS_FADE).clamp(0.0, 1.0);
+    (1.0 - progress) as f32
+}
+
 #[allow(dead_code)]
 fn draw_test_line() {
     let screen_width = screen_width();
@@ -784,10 +819,22 @@ fn draw_lines(chart: &Chart, time: f64) {
             if revelation_size() < 1.0 {
                 draw_circle(x as f32, y as f32, 4.0, BLACK);
             }
-            let result_color = match line_color {
+            let mut result_color = match line_color {
                 Some(lc) => mix_color(&point.color, &lc),
                 None => point.color,
             };
+            if line.miss_flash_until > time {
+                let flash = ((line.miss_flash_until - time) / 0.35).clamp(0.0, 1.0);
+                result_color = mix_color(
+                    &result_color,
+                    &chart::Color {
+                        r: 0,
+                        g: 0,
+                        b: 0,
+                        a: (220.0 * flash) as u8,
+                    },
+                );
+            }
             if i + 1 < line.line_points.len() {
                 let next_point = &line.line_points[i + 1];
                 let mut next_point_cvs_pos = cvs_pos;
@@ -796,10 +843,22 @@ fn draw_lines(chart: &Chart, time: f64) {
                 }
                 let next_x = (next_point.x_position + next_point_cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
                 let next_y = (-(next_point.floor_position - next_point_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y();
-                let next_point_result_color = match line_color {
+                let mut next_point_result_color = match line_color {
                     Some(lc) => mix_color(&next_point.color, &lc),
                     None => next_point.color,
                 };
+                if line.miss_flash_until > time {
+                    let flash = ((line.miss_flash_until - time) / 0.35).clamp(0.0, 1.0);
+                    next_point_result_color = mix_color(
+                        &next_point_result_color,
+                        &chart::Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: (220.0 * flash) as u8,
+                        },
+                    );
+                }
                 if !segment_intersects_screen((x, y), (next_x, next_y), screen_width, screen_height) {
                     continue;
                 } if x == next_x && y == next_y {
@@ -891,7 +950,7 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
             continue;
         }
         // 按 y 坐标插值：求该段与判定线（floor_y）的交点参数 t，保证环贴合在判定线上的线
-        let design_floor = 1040.0;
+        let design_floor = FLOOR_DESIGN_Y;
         let y0 = -(p0.floor_position - p0_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0 + design_floor;
         let y1 = -(p1.floor_position - p1_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0 + design_floor;
         let t = if (y1 - y0).abs() > 1e-9 {
@@ -907,19 +966,67 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
     }
 }
 
-// 打击特效（对应 JS 的 hit 类）
-struct HitEffect {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HitKind {
+    Hit,
+    Bad,
+    Miss,
+}
+
+pub struct HitEffect {
     x: f64,
+    y: f64,
     timer: f64,
+    duration: f64,
+    kind: HitKind,
     block_count: usize,
     blocks_r: Vec<f64>,
     block_s: Vec<f64>,
     r_b_offset: Vec<f64>,
     r_b_s: Vec<f64>,
+    horizon_speed: f64,
+    parabola_progress: f64,
+    parabola_offset: f64,
+    parabola_speed: f64,
+    rotate_scale: f64,
 }
 
 impl HitEffect {
-    fn new(x: f64, timer: f64, in_challenge: bool) -> Self {
+    pub fn new(x: f64, timer: f64, in_challenge: bool) -> Self {
+        Self::with_kind(x, floor_y(), timer, 0.5, in_challenge, HitKind::Hit)
+    }
+
+    pub fn bad(x: f64, y: f64, timer: f64) -> Self {
+        Self::with_kind(x, y, timer, 0.5, false, HitKind::Bad)
+    }
+
+    pub fn miss(x: f64, timer: f64) -> Self {
+        let mut fx = Self::with_kind(x, floor_y(), timer, 0.85, false, HitKind::Miss);
+        let range = 180.0;
+        let dead = 70.0;
+        let mut speed = (rand_f64() * 2.0 - 1.0) * range;
+        if speed >= 0.0 {
+            speed += dead;
+        } else {
+            speed -= dead;
+        }
+        let progress = -(rand_f64() * 0.55 + 0.35);
+        fx.horizon_speed = speed;
+        fx.parabola_progress = progress;
+        fx.parabola_offset = progress * progress;
+        fx.parabola_speed = 1.7;
+        fx.rotate_scale = 1.15;
+        fx.block_count = (rand_f64() * 3.0).floor() as usize + 6;
+        fx.blocks_r.clear();
+        fx.block_s.clear();
+        for _ in 0..fx.block_count {
+            fx.blocks_r.push(rand_f64() * 360.0);
+            fx.block_s.push(rand_f64() * 16.0 + 8.0);
+        }
+        fx
+    }
+
+    fn with_kind(x: f64, y: f64, timer: f64, duration: f64, in_challenge: bool, kind: HitKind) -> Self {
         let block_count = (rand_f64() * 2.0).floor() as usize + 3;
         let mut blocks_r = Vec::with_capacity(block_count);
         let mut block_s = Vec::with_capacity(block_count);
@@ -936,17 +1043,33 @@ impl HitEffect {
                 r_b_s.push((rand_f64() * 10.0).floor() + 10.0);
             }
         }
-        Self { x, timer, block_count, blocks_r, block_s, r_b_offset, r_b_s }
+        Self {
+            x,
+            y,
+            timer,
+            duration,
+            kind,
+            block_count,
+            blocks_r,
+            block_s,
+            r_b_offset,
+            r_b_s,
+            horizon_speed: 0.0,
+            parabola_progress: 0.0,
+            parabola_offset: 0.0,
+            parabola_speed: 0.0,
+            rotate_scale: 0.0,
+        }
     }
 }
 
 // 当前完整激活的挑战主题索引；进入/退出过渡不切换打击特效颜色。
-fn find_hit_theme_index(chart: &Chart, time: f64) -> Option<usize> {
+pub fn find_hit_theme_index(chart: &Chart, time: f64) -> Option<usize> {
     find_active_challenge_theme_index(chart, time)
 }
 
 // 生成打击特效（在 is_hited 更新前调用，避免可变借用冲突）
-fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
+pub fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
     let camera_pos = find_canmera_move(chart, time);
     let camera_x = camera_pos[0];
     let camera_scale = camera_pos[1];
@@ -978,7 +1101,10 @@ fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
 }
 
 fn draw_hit_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
-    let judge_y = floor_y();
+    draw_hit_blocks_at(h, t, scale, color, floor_y());
+}
+
+fn draw_hit_blocks_at(h: &HitEffect, t: f64, scale: f64, color: chart::Color, origin_y: f64) {
     let ease11 = ease::EASE_FUNCS[11](t);
     let ease10 = ease::EASE_FUNCS[10](t);
     for i in 0..h.block_count {
@@ -987,7 +1113,7 @@ fn draw_hit_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
         let offset = wh / 2.0;
         let block_offset = ease11 * 100.0 * scale * 2.0;
         let x1 = h.x + block_offset * angle.cos() - offset;
-        let y1 = judge_y + block_offset * angle.sin() - offset;
+        let y1 = origin_y + block_offset * angle.sin() - offset;
         let radius = (wh - wh * ease10) * 0.5;
         if radius <= 0.0 {
             continue;
@@ -1030,18 +1156,115 @@ fn draw_riz_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
     }
 }
 
+fn miss_cross_pos(h: &HitEffect, elapsed: f64, scale: f64) -> (f64, f64, f64) {
+    let progress = h.parabola_progress + elapsed * h.parabola_speed;
+    let lift = (h.parabola_offset - progress * progress) * 220.0 * scale * 2.0;
+    let x = h.x + elapsed * h.horizon_speed * scale * 2.0;
+    let y = h.y - lift;
+    let angle = elapsed * h.horizon_speed * h.rotate_scale * PI / 180.0;
+    (x, y, angle)
+}
+
+fn draw_rotated_bar(cx: f64, cy: f64, angle: f64, half_w: f64, half_h: f64, color: Color) {
+    let c = angle.cos();
+    let s = angle.sin();
+    let corners = [
+        (-half_w, -half_h),
+        (half_w, -half_h),
+        (half_w, half_h),
+        (-half_w, half_h),
+    ];
+    let mut pts = [(0.0f32, 0.0f32); 4];
+    for (i, (px, py)) in corners.iter().enumerate() {
+        pts[i] = (
+            (cx + px * c - py * s) as f32,
+            (cy + px * s + py * c) as f32,
+        );
+    }
+    draw_triangle(
+        vec2(pts[0].0, pts[0].1),
+        vec2(pts[1].0, pts[1].1),
+        vec2(pts[2].0, pts[2].1),
+        color,
+    );
+    draw_triangle(
+        vec2(pts[0].0, pts[0].1),
+        vec2(pts[2].0, pts[2].1),
+        vec2(pts[3].0, pts[3].1),
+        color,
+    );
+}
+
+fn draw_cross_arm(cx: f64, cy: f64, angle: f64, inner: f64, outer: f64, radius: f64, color: Color) {
+    let c = angle.cos();
+    let s = angle.sin();
+    let mid = (inner + outer) * 0.5;
+    let half_len = (outer - inner) * 0.5;
+    draw_rotated_bar(cx + mid * c, cy + mid * s, angle, half_len, radius, color);
+    draw_circle((cx + outer * c) as f32, (cy + outer * s) as f32, radius as f32, color);
+}
+
+fn draw_miss_cross(h: &HitEffect, elapsed: f64, t: f64, scale: f64) {
+    let (x, y, angle) = miss_cross_pos(h, elapsed, scale);
+    let shrink = (1.0 - t).clamp(0.0, 1.0);
+    if shrink > 0.02 {
+        let color = Color::new(0.08, 0.08, 0.08, 1.0);
+        let arm = 17.0 * scale * 2.0 * shrink;
+        let radius = (4.2 * scale * 2.0 * shrink).max(1.0);
+        draw_circle(x as f32, y as f32, radius as f32, color);
+        for i in 0..4 {
+            draw_cross_arm(x, y, angle + PI * 0.5 * i as f64, radius, arm, radius, color);
+        }
+    }
+
+    let ease11 = ease::EASE_FUNCS[11](t);
+    let ease10 = ease::EASE_FUNCS[10](t);
+    let origin_alpha = ((1.0 - t) * 0.9) as f32;
+    let ring_size = (22.0 + 70.0 * ease11) * scale * 2.0;
+    let ring_w = ((10.0 - 10.0 * ease10) * scale * 2.0).max(0.4);
+    draw_circle_lines(h.x as f32, h.y as f32, (ring_size * 0.5) as f32, ring_w as f32, Color::new(0.0, 0.0, 0.0, origin_alpha));
+
+    for i in 0..h.block_count {
+        let particle_angle = h.blocks_r[i] * PI / 180.0;
+        let wh = h.block_s[i] * scale * 2.0;
+        let from_origin = i % 2 == 0;
+        let (ox, oy) = if from_origin { (h.x, h.y) } else { (x, y) };
+        let travel = if from_origin { 70.0 } else { 48.0 };
+        let block_offset = ease11 * travel * scale * 2.0;
+        let px = ox + block_offset * particle_angle.cos();
+        let py = oy + block_offset * particle_angle.sin();
+        let radius = (wh - wh * ease10) * 0.45;
+        if radius <= 0.0 {
+            continue;
+        }
+        draw_circle(
+            px as f32,
+            py as f32,
+            radius as f32,
+            Color::new(0.0, 0.0, 0.0, (1.0 - ease10) as f32),
+        );
+    }
+}
+
 fn draw_hits(chart: &Chart, hits: &[HitEffect], time: f64, effect_color: chart::Color) {
     let scale = find_canmera_move(chart, time)[1] * scale_x();
-    let judge_y = floor_y();
+    let black = chart::Color { r: 0, g: 0, b: 0, a: 255 };
     for h in hits.iter() {
-        let t = ((time - h.timer) / 0.5).clamp(0.0, 1.0);
-        let ease_value = ease::EASE_FUNCS[11](t);
-        let size = (30.0 + 70.0 * ease_value) * 2.0;
-        let lw = ((30.0 - 30.0 * ease_value) * scale * 2.0).max(0.1);
-        let ring_color = chart_color_to_macroquad(&effect_color);
-        draw_circle_lines(h.x as f32, judge_y as f32, (size * scale * 0.5) as f32, lw as f32, ring_color);
-        draw_hit_blocks(h, t, scale, effect_color);
-        draw_riz_blocks(h, t, scale, effect_color);
+        let elapsed = (time - h.timer).max(0.0);
+        let t = (elapsed / h.duration.max(1e-6)).clamp(0.0, 1.0);
+        match h.kind {
+            HitKind::Miss => draw_miss_cross(h, elapsed, t, scale),
+            HitKind::Bad => draw_hit_blocks_at(h, t, scale, black, h.y),
+            HitKind::Hit => {
+                let ease_value = ease::EASE_FUNCS[11](t);
+                let size = (30.0 + 70.0 * ease_value) * 2.0;
+                let lw = ((30.0 - 30.0 * ease_value) * scale * 2.0).max(0.1);
+                let ring_color = chart_color_to_macroquad(&effect_color);
+                draw_circle_lines(h.x as f32, h.y as f32, (size * scale * 0.5) as f32, lw as f32, ring_color);
+                draw_hit_blocks(h, t, scale, effect_color);
+                draw_riz_blocks(h, t, scale, effect_color);
+            }
+        }
     }
 }
 
@@ -1065,7 +1288,7 @@ fn update_note_state(chart: &mut Chart, time: f64, hits: &mut Vec<HitEffect>, mu
         }
     }
 
-    hits.retain(|h| time >= h.timer && time - h.timer <= 0.5);
+    hits.retain(|h| time >= h.timer && time - h.timer <= h.duration);
 }
 
 fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
@@ -1075,9 +1298,17 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
     let cs = (camera_scale * scale_x() * 2.0) as f32;
     for line in &chart.lines {
         for note in &line.notes {
+            let fade = note_fade(note, time);
+            if fade <= 0.0 {
+                continue;
+            }
+            if note.is_hited && note.note_type != 2 {
+                continue;
+            }
             if time > chart.tick_to_seconds(note.time) && note.note_type != 2 {
                 continue;
             }
+            let cs = cs * fade;
             let note_time = chart.tick_to_seconds(note.time);
 
             // note 所在线段（用于 note 的实际 x/y，对应 JS 的 j.linePoint）
@@ -1107,13 +1338,13 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
             if note.note_type == 0 {
                 let x = x_at_note;
                 let y = y_at_note;
-                draw_circle(x as f32, y as f32, 10.0 * cs, chart_color_to_macroquad(&note_color));
-                draw_circle_lines(x as f32, y as f32, 10.0 * cs, 6.0 * cs, BLACK);
+                draw_circle(x as f32, y as f32, 10.0 * cs, chart_color_to_macroquad_alpha(&note_color, fade));
+                draw_circle_lines(x as f32, y as f32, 10.0 * cs, 6.0 * cs, black_alpha(fade));
             } else if note.note_type == 1 {
                 let x = x_at_note;
                 let y = y_at_note;
-                draw_circle(x as f32, y as f32, 9.0 * cs, WHITE);
-                draw_circle_lines(x as f32, y as f32, 9.0 * cs, 6.0 * cs, BLACK);
+                draw_circle(x as f32, y as f32, 9.0 * cs, white_alpha(fade));
+                draw_circle_lines(x as f32, y as f32, 9.0 * cs, 6.0 * cs, black_alpha(fade));
             } else if note.note_type == 2 {
                 if let Some(ref infos) = note.other_informations {
                     if infos.len() >= 3 {
@@ -1152,18 +1383,20 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                         let tail_cvs_pos = find_canvas_move(chart, time, hold_end_canvas_index);
                         let tail_y_offset = hold_end_fp - tail_cvs_pos[1];
                         let dy = -(tail_y_offset) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y();
-                        let color_mq = chart_color_to_macroquad(&note_color);
+                        // Miss 淡出时整体缩小：尾端向判定线上的头部收拢
+                        let dy = y + (dy - y) * fade as f64;
+                        let color_mq = chart_color_to_macroquad_alpha(&note_color, fade);
                         // 已过 hold 尾：头部按 1 - dt^3 收缩消失
                         if time > hold_end_secs {
                             let dt = (time - hold_end_secs) / 0.2;
                             let progress = (1.0 - dt.powi(3)).max(0.0) as f32;
-                            draw_circle_lines(x as f32, y as f32, 10.0 * progress * cs, 3.0 * cs, BLACK);
-                            draw_circle(x as f32, y as f32, 8.0 * progress * cs, WHITE);
-                            draw_circle_lines(x as f32, y as f32, 8.0 * progress * cs, 3.0 * cs, BLACK);
+                            draw_circle_lines(x as f32, y as f32, 10.0 * progress * cs, 3.0 * cs, black_alpha(fade));
+                            draw_circle(x as f32, y as f32, 8.0 * progress * cs, white_alpha(fade));
+                            draw_circle_lines(x as f32, y as f32, 8.0 * progress * cs, 3.0 * cs, black_alpha(fade));
                             continue;
                         }
                         // 头部外圈
-                        draw_circle_lines(x as f32, y as f32, 10.0 * cs, 3.0 * cs, BLACK);
+                        draw_circle_lines(x as f32, y as f32, 10.0 * cs, 3.0 * cs, black_alpha(fade));
                         // hold 尾渐变矩形（自 y 向 dy：noteColor 在 0~36/63，之后渐变到透明白）
                         let hold_size = 10.0 * cs;
                         let segments = 24;
@@ -1178,12 +1411,12 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                             let seg_color = if mid_t <= 36.0 / 63.0 {
                                 color_mq
                             } else {
-                                let fade = ((mid_t - 36.0 / 63.0) / (27.0 / 63.0)).clamp(0.0, 1.0);
+                                let gf = ((mid_t - 36.0 / 63.0) / (27.0 / 63.0)).clamp(0.0, 1.0);
                                 macroquad::prelude::Color::new(
-                                    color_mq.r + (1.0 - color_mq.r) * fade,
-                                    color_mq.g + (1.0 - color_mq.g) * fade,
-                                    color_mq.b + (1.0 - color_mq.b) * fade,
-                                    color_mq.a * (1.0 - fade),
+                                    color_mq.r + (1.0 - color_mq.r) * gf,
+                                    color_mq.g + (1.0 - color_mq.g) * gf,
+                                    color_mq.b + (1.0 - color_mq.b) * gf,
+                                    color_mq.a * (1.0 - gf),
                                 )
                             };
                             let rect_y = rect_y0.min(rect_y1);
@@ -1193,11 +1426,11 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                             }
                         }
                         // hold 尾两侧黑边
-                        draw_line(x as f32 - hold_size, y as f32, x as f32 - hold_size, dy as f32, 5.0 * cs, BLACK);
-                        draw_line(x as f32 + hold_size, y as f32, x as f32 + hold_size, dy as f32, 5.0 * cs, BLACK);
+                        draw_line(x as f32 - hold_size, y as f32, x as f32 - hold_size, dy as f32, 5.0 * cs, black_alpha(fade));
+                        draw_line(x as f32 + hold_size, y as f32, x as f32 + hold_size, dy as f32, 5.0 * cs, black_alpha(fade));
                         // 头部内圈
-                        draw_circle(x as f32, y as f32, 10.0 * cs, WHITE);
-                        draw_circle_lines(x as f32, y as f32, 10.0 * cs, 8.0 * cs, BLACK);
+                        draw_circle(x as f32, y as f32, 10.0 * cs, white_alpha(fade));
+                        draw_circle_lines(x as f32, y as f32, 10.0 * cs, 8.0 * cs, black_alpha(fade));
                     }
                 }
             }
@@ -1230,6 +1463,36 @@ fn cpal_settings() -> CpalSettings {
     }
 }
 
+// Desktop uses cpal. Android must use sasa's oboe backend: cpal's Android host
+// can block forever while enumerating output configs, which freezes the game
+// right after the music starts.
+#[cfg(not(target_arch = "wasm32"))]
+fn new_audio_manager() -> Option<AudioManager> {
+    #[cfg(target_os = "android")]
+    {
+        // Low latency keeps the audio callback small, which also makes the
+        // reportable playback position advance in smaller steps.
+        let settings = sasa::backend::oboe::OboeSettings {
+            buffer_size: Some(256),
+            performance_mode: sasa::backend::oboe::PerformanceMode::LowLatency,
+            usage: sasa::backend::oboe::Usage::Media,
+        };
+        let backend = sasa::backend::oboe::OboeBackend::new(settings);
+        match AudioManager::new(backend) {
+            Ok(manager) => Some(manager),
+            Err(error) => {
+                eprintln!("failed to create AudioManager: {error:?}");
+                None
+            }
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let backend = CpalBackend::new(cpal_settings());
+        AudioManager::new(backend).ok()
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct HitSounds {
     _manager: AudioManager,
@@ -1239,50 +1502,47 @@ struct HitSounds {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl HitSounds {
-    fn new() -> Self {
-        let backend = CpalBackend::new(cpal_settings());
-        let mut manager = AudioManager::new(backend)
-            .expect("failed to create hit sound AudioManager");
+    fn new() -> Option<Self> {
+        // A second stream is not always available (e.g. exclusive audio on
+        // mobile); degrade to silent hits instead of taking the game down.
+        let mut manager = new_audio_manager()?;
         let tap = manager
-            .create_sfx(
-                AudioClip::new(TAP_HIT_DATA.to_vec()).expect("invalid tap hit wav"),
-                None,
-            )
-            .expect("failed to create tap sfx");
+            .create_sfx(AudioClip::new(TAP_HIT_DATA.to_vec()).ok()?, None)
+            .ok()?;
         let drag = manager
-            .create_sfx(
-                AudioClip::new(DRAG_HIT_DATA.to_vec()).expect("invalid drag hit wav"),
-                None,
-            )
-            .expect("failed to create drag sfx");
-        Self {
+            .create_sfx(AudioClip::new(DRAG_HIT_DATA.to_vec()).ok()?, None)
+            .ok()?;
+        Some(Self {
             _manager: manager,
             tap,
             drag,
-        }
+        })
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
-    static HIT_SOUNDS: RefCell<HitSounds> = RefCell::new(HitSounds::new());
+    static HIT_SOUNDS: RefCell<Option<HitSounds>> = RefCell::new(HitSounds::new());
 }
 
-fn play_hit_sound(note_type: i32) {
+pub fn play_hit_sound(note_type: i32) {
     #[cfg(target_arch = "wasm32")]
     {
         web::play_hit_sound(note_type);
     }
     #[cfg(not(target_arch = "wasm32"))]
     HIT_SOUNDS.with(|cell| {
-        let mut sounds = cell.borrow_mut();
-    let sfx: &mut Sfx = match note_type {
-        1 => &mut sounds.drag,
-        _ => &mut sounds.tap,
-    };
-    if let Err(e) = sfx.play(PlaySfxParams::default()) {
-        eprintln!("play_hit_sound failed: {e:?}");
-    }
+        let mut guard = cell.borrow_mut();
+        let Some(sounds) = guard.as_mut() else {
+            return;
+        };
+        let sfx: &mut Sfx = match note_type {
+            1 => &mut sounds.drag,
+            _ => &mut sounds.tap,
+        };
+        if let Err(e) = sfx.play(PlaySfxParams::default()) {
+            eprintln!("play_hit_sound failed: {e:?}");
+        }
     });
 }
 
@@ -1407,7 +1667,7 @@ fn transition_mask(chart: &Chart, time: f64) -> Option<(usize, usize, Vec2, f32)
     ))
 }
 
-fn draw_scene(chart: &Chart, hits: &[HitEffect], time: f64, show_canvases: bool, theme_idx: Option<usize>) {
+fn draw_scene(chart: &Chart, hits: &[HitEffect], time: f64, show_canvases: bool, theme_idx: Option<usize>, combo: i32) {
     clear_background(BLACK);
     draw_background(chart, theme_idx);
     if show_canvases {
@@ -1418,7 +1678,7 @@ fn draw_scene(chart: &Chart, hits: &[HitEffect], time: f64, show_canvases: bool,
     draw_hits(chart, hits, time, effect_color_for_theme(chart, theme_idx));
     draw_judge_ring(chart, time);
     draw_scaled_range();
-    draw_combo(chart);
+    draw_combo(combo);
     draw_shui_yin();
     draw_revelation_info(chart, time);
 }
@@ -1431,8 +1691,12 @@ fn draw_frame(
     show_canvases: bool,
     composer: &mut ChallengeComposer,
     output_target: Option<RenderTarget>,
+    auto_hit: bool,
+    combo: i32,
 ) {
-    update_note_state(chart, time, hits, mute);
+    if auto_hit {
+        update_note_state(chart, time, hits, mute);
+    }
     let width = render_w().round().max(1.0) as u32;
     let height = render_h().round().max(1.0) as u32;
     let Some((theme_idx, base_idx, mask_center, mask_radius)) = transition_mask(chart, time) else {
@@ -1443,7 +1707,7 @@ fn draw_frame(
             }),
             None => set_default_camera(),
         }
-        draw_scene(chart, hits, time, show_canvases, find_active_challenge_theme_index(chart, time));
+        draw_scene(chart, hits, time, show_canvases, find_active_challenge_theme_index(chart, time), combo);
         return;
     };
 
@@ -1453,14 +1717,14 @@ fn draw_frame(
         ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, width as f32, height as f32))
     };
     set_camera(&default_camera);
-    draw_scene(chart, hits, time, show_canvases, (base_idx > 0).then_some(base_idx));
+    draw_scene(chart, hits, time, show_canvases, (base_idx > 0).then_some(base_idx), combo);
 
     let challenge_camera = Camera2D {
         render_target: Some(composer.challenge_target.clone()),
         ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, width as f32, height as f32))
     };
     set_camera(&challenge_camera);
-    draw_scene(chart, hits, time, show_canvases, Some(theme_idx));
+    draw_scene(chart, hits, time, show_canvases, Some(theme_idx), combo);
 
     match output_target.as_ref() {
         Some(target) => set_camera(&Camera2D {
@@ -1815,7 +2079,7 @@ async fn render_video(
     let row_bytes = w as usize * 4;
 
     while frame < total_frames {
-        draw_frame(chart, hits, time, true, true, composer, Some(target.clone()));
+        draw_frame(chart, hits, time, true, true, composer, Some(target.clone()), true, calculate_combo(count_hits(chart)));
         set_default_camera();
 
         let img = target.texture.get_texture_data();
@@ -1944,6 +2208,8 @@ async fn main() {
     {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut recorder_mode = false;
+    let mut play_mode = false;
+    let mut play_diff = play::Difficulty::In;
     let mut width = 1080u32;
     let mut height = 1920u32;
     let mut fps = 60u32;
@@ -1954,6 +2220,15 @@ async fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--recorder" => recorder_mode = true,
+            "--play" => play_mode = true,
+            "--diff" | "--difficulty" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    if let Some(diff) = play::Difficulty::parse(v) {
+                        play_diff = diff;
+                    }
+                }
+            }
             "--width" => {
                 i += 1;
                 if let Some(v) = args.get(i) {
@@ -2063,13 +2338,20 @@ async fn main() {
         return;
     }
 
-    // 普通播放
     music.play().unwrap();
     let mut display_fps = 0;
     let mut last_fps_update = get_time();
+    let mut session = play_mode.then(|| play::PlaySession::new(&chart, play_diff));
         loop {
             let position = music.position() as f64;
-            draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
+            let ended = position >= music_duration as f64 - 0.02;
+            let combo = if let Some(session) = session.as_mut() {
+                session.update(&mut chart, position, &mut hits, false, ended);
+                session.displayed_combo()
+            } else {
+                calculate_combo(count_hits(&chart))
+            };
+            draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None, session.is_none(), combo);
         update_fps(&mut display_fps, &mut last_fps_update);
         draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
         next_frame().await;
@@ -2104,53 +2386,73 @@ async fn run_web() {
         next_frame().await;
     }
 
+    // 游玩 is a start-time choice: the page locks it once the music is loaded, so
+    // the mode is read exactly once here. Restarting on a later flip used to
+    // leave the previous audio source playing on top of the new one.
+    let play_mode = web::play_mode();
     web::music_play();
     let mut hits: Vec<HitEffect> = Vec::new();
     let mut composer = ChallengeComposer::new();
     let mut display_fps = 0;
     let mut last_fps_update = get_time();
+    let mut session = play_mode.then(|| play::PlaySession::new(&chart, play::Difficulty::In));
     loop {
         let position = web::music_position();
-        draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
+        let duration = web::music_duration();
+        let ended = duration > 0.0 && position >= duration - 0.02;
+        let combo = if let Some(session) = session.as_mut() {
+            session.update(&mut chart, position, &mut hits, false, ended);
+            session.displayed_combo()
+        } else {
+            calculate_combo(count_hits(&chart))
+        };
+        draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None, session.is_none(), combo);
         update_fps(&mut display_fps, &mut last_fps_update);
         draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
         next_frame().await;
     }
 }
 
-// Mobile has no command line and no rfd backend, so the chart and the music are
-// read from the app's Documents folder. On iOS that folder is exposed through
-// Finder / the Files app (UIFileSharingEnabled), so dropping files in is the
-// "upload" step; no native file picker is required.
-#[cfg(target_os = "android")]
-fn mobile_document_dir() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME") {
-        let documents = PathBuf::from(home).join("Documents");
-        if documents.is_dir() {
-            return Some(documents);
-        }
-    }
-    std::env::current_dir().ok()
+// sasa only refreshes `Music::position()` once per audio callback, so on mobile
+// the chart clock advances in audio buffer sized steps: the frame rate can be a
+// steady 60 while the picture visibly stutters. Extrapolate the audio clock with
+// the frame timer between updates, holding it slightly behind the mixer so the
+// picture stays smooth and the output latency still lines up with what is heard.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+struct MusicClock {
+    audio: f64,
+    anchor: f64,
+    smooth: f64,
 }
 
-#[cfg(target_os = "android")]
-fn find_first_file(dir: &std::path::Path, extensions: &[&str]) -> Option<PathBuf> {
-    let mut matches: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_file())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| {
-                    let lower = name.to_lowercase();
-                    extensions.iter().any(|ext| lower.ends_with(ext))
-                })
-                .unwrap_or(false)
-        })
-        .collect();
-    matches.sort();
-    matches.into_iter().next()
+#[cfg(any(target_os = "android", target_os = "ios"))]
+impl MusicClock {
+    fn new() -> Self {
+        Self {
+            audio: f64::NAN,
+            anchor: 0.0,
+            smooth: 0.0,
+        }
+    }
+
+    fn tick(&mut self, audio: f64) -> f64 {
+        let now = get_time();
+        if !((audio - self.audio).abs() < 1e-9) {
+            self.audio = audio;
+            self.anchor = now;
+        }
+        let lag = 0.02;
+        let elapsed = (now - self.anchor).clamp(0.0, 0.5);
+        let target = ((self.audio - lag) + elapsed).max(0.0);
+        // Never step backwards: a late audio update holds the clock instead of
+        // rewinding the picture.
+        self.smooth = if self.smooth == 0.0 {
+            target
+        } else {
+            target.max(self.smooth)
+        };
+        self.smooth
+    }
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -2159,6 +2461,7 @@ async fn run_mobile() {
     let font = load_ttf_font_from_bytes(FONT_DATA).expect("invalid embedded font");
     set_default_font(font);
 
+    let play_mode = choose_play_mode().await;
     let json_path = choose_chart().await;
     let audio_path = choose_music().await;
 
@@ -2179,10 +2482,17 @@ async fn run_mobile() {
     sort_chart(&mut chart);
     recalculate_all_fp(&mut chart);
 
-    let backend = CpalBackend::new(cpal_settings());
-    let mut manager = AudioManager::new(backend).expect("failed to create AudioManager");
+    let Some(mut manager) = new_audio_manager() else {
+        eprintln!("cannot open audio output");
+        clear_background(BLACK);
+        draw_text("无法打开音频输出", 30.0, 80.0, 28.0, WHITE);
+        loop {
+            next_frame().await;
+        }
+    };
     let data = std::fs::read(&audio_path).expect("cannot read music file");
     let clip = AudioClip::new(data).expect("invalid music file");
+    let music_duration = clip.length();
     let params = MusicParams {
         loop_mix_time: -1.0,
         amplifier: 1.0,
@@ -2198,9 +2508,19 @@ async fn run_mobile() {
     let mut composer = ChallengeComposer::new();
     let mut display_fps = 0;
     let mut last_fps_update = get_time();
+    let mut session = play_mode.then(|| play::PlaySession::new(&chart, play::Difficulty::In));
+    let mut clock = MusicClock::new();
     loop {
-        let position = music.position() as f64;
-        draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None);
+        let audio_position = music.position() as f64;
+        let position = clock.tick(audio_position);
+        let ended = audio_position >= music_duration as f64 - 0.02;
+        let combo = if let Some(session) = session.as_mut() {
+            session.update(&mut chart, position, &mut hits, false, ended);
+            session.displayed_combo()
+        } else {
+            calculate_combo(count_hits(&chart))
+        };
+        draw_frame(&mut chart, &mut hits, position, false, true, &mut composer, None, session.is_none(), combo);
         update_fps(&mut display_fps, &mut last_fps_update);
         draw_text(&format!("second:{:.2}  fps:{}", position, display_fps), 20.0, 25.0, 30.0, WHITE);
         next_frame().await;
@@ -2208,35 +2528,23 @@ async fn run_mobile() {
 }
 
 #[cfg(target_os = "android")]
+async fn choose_play_mode() -> bool {
+    android::ask_play().await
+}
+
+#[cfg(target_os = "ios")]
+async fn choose_play_mode() -> bool {
+    true
+}
+
+#[cfg(target_os = "android")]
 async fn choose_chart() -> PathBuf {
-    let documents = mobile_document_dir();
-    loop {
-        if let Some(path) = documents
-            .as_deref()
-            .and_then(|dir| find_first_file(dir, &[".json"]))
-        {
-            return path;
-        }
-        clear_background(BLACK);
-        draw_text("Put a chart .json into the app Documents folder", 30.0, 80.0, 26.0, WHITE);
-        next_frame().await;
-    }
+    android::pick_file("*/*", "选择谱面 JSON").await
 }
 
 #[cfg(target_os = "android")]
 async fn choose_music() -> PathBuf {
-    let documents = mobile_document_dir();
-    loop {
-        if let Some(path) = documents
-            .as_deref()
-            .and_then(|dir| find_first_file(dir, &[".wav", ".ogg", ".mp3", ".flac"]))
-        {
-            return path;
-        }
-        clear_background(BLACK);
-        draw_text("Put a music file into the app Documents folder", 30.0, 120.0, 26.0, WHITE);
-        next_frame().await;
-    }
+    android::pick_file("*/*", "选择音乐文件").await
 }
 
 #[cfg(target_os = "ios")]

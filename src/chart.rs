@@ -153,6 +153,8 @@ pub struct Line {
     pub notes: Vec<Note>,
     pub judge_ring_color: Vec<ColorPoint>,
     pub line_color: Vec<ColorPoint>,
+    #[serde(default, skip)]
+    pub miss_flash_until: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +178,9 @@ pub struct Note {
     pub other_informations: Option<Vec<f64>>,
     #[serde(default)]
     pub is_hited: bool,
+    // 判定为 Miss 的时间点；>0 表示正在播放整体淡出消失动画（原作 SendRendererEvent(0)）
+    #[serde(default, skip)]
+    pub missed_at: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
