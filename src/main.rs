@@ -1298,7 +1298,26 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
     let cs = (camera_scale * scale_x() * 2.0) as f32;
     for line in &chart.lines {
         for note in &line.notes {
-            let fade = note_fade(note, time);
+            // 原作断条（EasyPoolChild trigger 0 → EventTrigger → TweenInfo）：
+            // 头/身体/线在 1.0s 内 OutSine 淡出，头/身体同时缩到 0.62，完成后
+            // ReturnToPool。长条几何在断条瞬间冻结（HoldControl 已把它移出
+            // runningHoldNotes），所以下面用 missed_at 作为几何时间。
+            let break_elapsed = if note.note_type == 2 && note.missed_at > 0.0 {
+                Some(time - note.missed_at)
+            } else {
+                None
+            };
+            if let Some(elapsed) = break_elapsed {
+                if elapsed >= 1.0 {
+                    continue;
+                }
+            }
+            // 长条由下面的 hold_alpha/hold_scale 控制，这里不参与整体淡出。
+            let fade = if note.note_type == 2 {
+                1.0
+            } else {
+                note_fade(note, time)
+            };
             if fade <= 0.0 {
                 continue;
             }
@@ -1352,56 +1371,65 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                         let hold_end_canvas_index = infos[1] as i32;
                         let hold_end_fp = infos[2];
                         let hold_end_secs = chart.tick_to_seconds(hold_end_time);
-                        // 超过 hold 尾 0.25s 后不再绘制
-                        if time - hold_end_secs > 0.2 {
+                        // 断条时几何冻结在 missed_at；正常时用当前时间。
+                        // TweenInfo: 1.0s OutSine，alpha 1→0，Scale 1→0.62。
+                        let (geom_time, hold_alpha, hold_scale) = match break_elapsed {
+                            Some(elapsed) => {
+                                let p = (elapsed / 1.0).clamp(0.0, 1.0);
+                                let s = (p * PI / 2.0).sin();
+                                (note.missed_at, (1.0 - s) as f32, (1.0 - 0.38 * s) as f32)
+                            }
+                            None => (time, 1.0, 1.0),
+                        };
+                        // 正常结束：超过 hold 尾 0.25s 后不再绘制；
+                        // 断条时几何已冻结，不按尾时间截断。
+                        if break_elapsed.is_none() && geom_time - hold_end_secs > 0.25 {
                             continue;
                         }
                         // 当前时间所在线段（用于 type 2 时间过后的 x 滑动）
-                        let (cur_idx1, cur_idx2) = find_line_segment(&line.line_points, time, chart);
+                        let (cur_idx1, cur_idx2) = find_line_segment(&line.line_points, geom_time, chart);
                         let cur_lp = &line.line_points[cur_idx1];
                         let next_cur_lp = &line.line_points[cur_idx2];
-                        let cur_lp_cvs = find_canvas_move(chart, time, cur_lp.canvas_index as i32);
-                        let next_cur_lp_cvs = find_canvas_move(chart, time, next_cur_lp.canvas_index as i32);
+                        let cur_lp_cvs = find_canvas_move(chart, geom_time, cur_lp.canvas_index as i32);
+                        let next_cur_lp_cvs = find_canvas_move(chart, geom_time, next_cur_lp.canvas_index as i32);
                         let cur_lp_time = chart.tick_to_seconds(cur_lp.time);
                         let next_cur_lp_time = chart.tick_to_seconds(next_cur_lp.time);
                         let cur_lp_x = (cur_lp.x_position + cur_lp_cvs[0] + camera_x) * 720.0 * camera_scale * scale_x() + center_x();
                         let next_cur_lp_x = (next_cur_lp.x_position + next_cur_lp_cvs[0] + camera_x) * 720.0 * camera_scale * scale_x() + center_x();
                         let t_cur = if (next_cur_lp_time - cur_lp_time).abs() > 1e-12 {
-                            ((time - cur_lp_time) / (next_cur_lp_time - cur_lp_time)).clamp(0.0, 1.0)
+                            ((geom_time - cur_lp_time) / (next_cur_lp_time - cur_lp_time)).clamp(0.0, 1.0)
                         } else {
                             0.0
                         };
                         let ease_cur = ease::EASE_FUNCS[cur_lp.ease_type as usize](t_cur);
                         let x_at_cur = cur_lp_x + (next_cur_lp_x - cur_lp_x) * ease_cur;
                         // 时间已过 note 头：x 沿当前线段滑动，y 固定在判定线
-                        let (x, y) = if time > note_time {
+                        let (x, y) = if geom_time > note_time {
                             (x_at_cur, floor_y())
                         } else {
                             (x_at_note, y_at_note)
                         };
-                        // 计算 hold 尾端的 y（取当前时刻 tail 所在 canvas 的位置）
-                        let tail_cvs_pos = find_canvas_move(chart, time, hold_end_canvas_index);
+                        // 计算 hold 尾端的 y（取几何时刻 tail 所在 canvas 的位置）
+                        let tail_cvs_pos = find_canvas_move(chart, geom_time, hold_end_canvas_index);
                         let tail_y_offset = hold_end_fp - tail_cvs_pos[1];
                         let dy = -(tail_y_offset) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y();
-                        // Miss 淡出时整体缩小：尾端向判定线上的头部收拢
-                        let dy = y + (dy - y) * fade as f64;
-                        let color_mq = chart_color_to_macroquad_alpha(&note_color, fade);
-                        // 已过 hold 尾：头部按 1 - dt^3 收缩消失
-                        if time > hold_end_secs {
-                            let dt = (time - hold_end_secs) / 0.2;
-                            let progress = (1.0 - dt.powi(3)).max(0.0) as f32;
-                            draw_circle_lines(x as f32, y as f32, 10.0 * progress * cs, 3.0 * cs, black_alpha(fade));
-                            draw_circle(x as f32, y as f32, 8.0 * progress * cs, white_alpha(fade));
-                            draw_circle_lines(x as f32, y as f32, 8.0 * progress * cs, 3.0 * cs, black_alpha(fade));
+                        let color_mq = chart_color_to_macroquad_alpha(&note_color, hold_alpha);
+                        // 正常打完：身体 0.25s InQuad Scale→0（TweenInfo 154）。
+                        if geom_time > hold_end_secs && break_elapsed.is_none() {
+                            let dt = (geom_time - hold_end_secs) / 0.25;
+                            let progress = (1.0 - dt * dt).max(0.0) as f32;
+                            draw_circle_lines(x as f32, y as f32, 10.0 * progress * cs, 3.0 * cs, black_alpha(hold_alpha));
+                            draw_circle(x as f32, y as f32, 8.0 * progress * cs, white_alpha(hold_alpha));
+                            draw_circle_lines(x as f32, y as f32, 8.0 * progress * cs, 3.0 * cs, black_alpha(hold_alpha));
                             continue;
                         }
-                        // 头部外圈
-                        draw_circle_lines(x as f32, y as f32, 10.0 * cs, 3.0 * cs, black_alpha(fade));
+                        // 头部外圈（断条时随身体缩到 0.62）
+                        draw_circle_lines(x as f32, y as f32, 10.0 * cs * hold_scale, 3.0 * cs, black_alpha(hold_alpha));
                         // hold 尾渐变矩形（自 y 向 dy：noteColor 在 0~36/63，之后渐变到透明白）
-                        let hold_size = 10.0 * cs;
+                        let hold_size = 10.0 * cs * hold_scale;
                         let segments = 24;
                         let y_start = y as f32;
-                        let y_end = dy as f32;
+                        let y_end = (y + (dy - y) * hold_scale as f64) as f32;
                         for i in 0..segments {
                             let t0 = i as f32 / segments as f32;
                             let t1 = (i + 1) as f32 / segments as f32;
@@ -1426,11 +1454,11 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                             }
                         }
                         // hold 尾两侧黑边
-                        draw_line(x as f32 - hold_size, y as f32, x as f32 - hold_size, dy as f32, 5.0 * cs, black_alpha(fade));
-                        draw_line(x as f32 + hold_size, y as f32, x as f32 + hold_size, dy as f32, 5.0 * cs, black_alpha(fade));
+                        draw_line(x as f32 - hold_size, y as f32, x as f32 - hold_size, y_end, 5.0 * cs, black_alpha(hold_alpha));
+                        draw_line(x as f32 + hold_size, y as f32, x as f32 + hold_size, y_end, 5.0 * cs, black_alpha(hold_alpha));
                         // 头部内圈
-                        draw_circle(x as f32, y as f32, 10.0 * cs, white_alpha(fade));
-                        draw_circle_lines(x as f32, y as f32, 10.0 * cs, 8.0 * cs, black_alpha(fade));
+                        draw_circle(x as f32, y as f32, 10.0 * cs * hold_scale, white_alpha(hold_alpha));
+                        draw_circle_lines(x as f32, y as f32, 10.0 * cs * hold_scale, 8.0 * cs, black_alpha(hold_alpha));
                     }
                 }
             }
@@ -1542,6 +1570,19 @@ pub fn play_hit_sound(note_type: i32) {
         };
         if let Err(e) = sfx.play(PlaySfxParams::default()) {
             eprintln!("play_hit_sound failed: {e:?}");
+        }
+    });
+}
+
+// 提前创建第二个音频流并预热一次 0 音量的 Sfx。HIT_SOUNDS 是 lazy
+// thread_local，若等到第一次命中才初始化，会在第一个 note 上创建
+// AudioManager/cpal stream 并分配 mixer voice，造成明显掉帧。
+pub fn warm_up_hit_sounds() {
+    #[cfg(not(target_arch = "wasm32"))]
+    HIT_SOUNDS.with(|cell| {
+        if let Some(sounds) = cell.borrow_mut().as_mut() {
+            let _ = sounds.tap.play(PlaySfxParams { amplifier: 0.0 });
+            let _ = sounds.drag.play(PlaySfxParams { amplifier: 0.0 });
         }
     });
 }
@@ -2343,6 +2384,7 @@ async fn main() {
         return;
     }
 
+    warm_up_hit_sounds();
     music.play().unwrap();
     let mut display_fps = 0;
     let mut last_fps_update = get_time();
@@ -2507,6 +2549,7 @@ async fn run_mobile() {
     let mut music = manager
         .create_music(clip, params)
         .expect("failed to create music");
+    warm_up_hit_sounds();
     music.play().expect("failed to start music");
 
     let mut hits: Vec<HitEffect> = Vec::new();

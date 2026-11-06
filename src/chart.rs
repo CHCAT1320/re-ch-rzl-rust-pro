@@ -178,7 +178,9 @@ pub struct Note {
     pub other_informations: Option<Vec<f64>>,
     #[serde(default)]
     pub is_hited: bool,
-    // 判定为 Miss 的时间点；>0 表示正在播放整体淡出消失动画（原作 SendRendererEvent(0)）
+    // 判定为 Miss 的时间点；>0 表示该音符已失败。长条（type 2）一旦 Miss
+    // 立即停止绘制剩余身体（对应原作 HoldControl 把长条移出 runningHoldNotes
+    // 并 SendRendererEvent(0)），其它音符由 is_hited 立即隐藏。
     #[serde(default, skip)]
     pub missed_at: f64,
 }
