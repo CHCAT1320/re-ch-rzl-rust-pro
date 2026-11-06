@@ -106,7 +106,6 @@ struct PlayNote {
     consumed: bool,
     drag_armed: bool,
     hold_active: bool,
-    hold_id: Option<i64>,
     hold_head_hit: bool,
     hold_early: bool,
     hold_locked: bool,
@@ -127,6 +126,10 @@ pub struct PlaySession {
     pending: Vec<usize>,
     tap_queue: Vec<usize>,
     drag_queue: Vec<usize>,
+    // Rizline's NoteInformation.fingerIds: the inputs bound to a hold when its
+    // head is judged. Entries are dropped as they are released; the list is
+    // never extended afterwards, so unrelated later presses cannot take over.
+    hold_bindings: Vec<Vec<i64>>,
     pointers: Vec<Pointer>,
     combo: i32,
     max_combo: i32,
@@ -218,7 +221,6 @@ impl PlaySession {
                     consumed: false,
                     drag_armed: false,
                     hold_active: false,
-                    hold_id: None,
                     hold_head_hit: false,
                     hold_early: false,
                     hold_locked: false,
@@ -227,6 +229,7 @@ impl PlaySession {
         }
         notes.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
         let pending: Vec<usize> = (0..notes.len()).collect();
+        let note_count = notes.len();
         let max_combo_score = (1..=all_notes).map(calculate_combo).sum();
         Self {
             windows,
@@ -234,6 +237,7 @@ impl PlaySession {
             pending,
             tap_queue: Vec::new(),
             drag_queue: Vec::new(),
+            hold_bindings: vec![Vec::new(); note_count],
             pointers: Vec::new(),
             combo: 0,
             max_combo: 0,
@@ -401,7 +405,7 @@ impl PlaySession {
             .filter(|pointer| pointer.pressed)
             .map(|pointer| (pointer.id, pointer.x, pointer.y))
             .collect();
-        for (pointer_id, input_x, input_y) in pressed {
+        for (_pointer_id, input_x, input_y) in pressed {
             let Some(note_idx) = self.closest_tap(chart, time, input_x) else {
                 continue;
             };
@@ -436,8 +440,17 @@ impl PlaySession {
                 used[note_idx] = true;
                 self.apply_judge(chart, note_idx, kind, time, mute, Some(hits), !is_hold, None);
                 if is_hold {
+                    // Bind every input that is down on the head-judge frame,
+                    // not just the one that hit the head. This is what lets a
+                    // hold transfer between hands/keys hit together, while a
+                    // lone hold cannot be taken over by a later press.
+                    self.hold_bindings[note_idx] = self
+                        .pointers
+                        .iter()
+                        .filter(|pointer| pointer.down)
+                        .map(|pointer| pointer.id)
+                        .collect();
                     self.notes[note_idx].hold_active = true;
-                    self.notes[note_idx].hold_id = Some(pointer_id);
                     self.notes[note_idx].consumed = false;
                     self.remove_from_queues(note_idx);
                     set_note_hit(chart, self.notes[note_idx].line, self.notes[note_idx].index, true);
@@ -545,15 +558,21 @@ impl PlaySession {
         let mut missed = Vec::new();
         let mut downgraded = Vec::new();
         let mut lock = Vec::new();
+        // Drop released fingers from every active hold, mirroring CheckHold.
+        for idx in 0..self.notes.len() {
+            if !self.notes[idx].hold_active {
+                continue;
+            }
+            let pointers = &self.pointers;
+            self.hold_bindings[idx]
+                .retain(|id| pointers.iter().any(|pointer| pointer.id == *id && pointer.down));
+        }
         for (idx, note) in self.notes.iter().enumerate() {
             if !note.hold_active {
                 continue;
             }
             let end = note.hold_end.unwrap_or(note.time);
-            let held = note
-                .hold_id
-                .map(|id| self.pointers.iter().any(|pointer| pointer.id == id && pointer.down))
-                .unwrap_or_else(|| self.any_input());
+            let held = !self.hold_bindings[idx].is_empty();
             let in_riz = note.in_challenge && challenge_on;
             // 原作 CheckHold：松手容差 = 1.6 × (Riztime ? normalPerfect : judgeTime)。
             let tol = if in_riz {
