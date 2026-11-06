@@ -405,7 +405,15 @@ impl PlaySession {
             .filter(|pointer| pointer.pressed)
             .map(|pointer| (pointer.id, pointer.x, pointer.y))
             .collect();
-        for (_pointer_id, input_x, input_y) in pressed {
+        // Original Update only processes touches whose `began` flag is set and
+        // binds those same touches to the hold it judges. Collect the inputs
+        // that actually hit a note this frame, then bind every hold judged this
+        // frame to that whole set. This gives simultaneous holds/taps their
+        // shared binding without letting an already-down or later finger take
+        // over a hold.
+        let mut frame_hit_ids: Vec<i64> = Vec::new();
+        let mut holds_judged: Vec<usize> = Vec::new();
+        for (pointer_id, input_x, input_y) in pressed {
             let Some(note_idx) = self.closest_tap(chart, time, input_x) else {
                 continue;
             };
@@ -438,18 +446,12 @@ impl PlaySession {
                     self.notes[note_idx].hold_head_hit = true;
                 }
                 used[note_idx] = true;
+                frame_hit_ids.push(pointer_id);
+                if is_hold {
+                    holds_judged.push(note_idx);
+                }
                 self.apply_judge(chart, note_idx, kind, time, mute, Some(hits), !is_hold, None);
                 if is_hold {
-                    // Bind every input that is down on the head-judge frame,
-                    // not just the one that hit the head. This is what lets a
-                    // hold transfer between hands/keys hit together, while a
-                    // lone hold cannot be taken over by a later press.
-                    self.hold_bindings[note_idx] = self
-                        .pointers
-                        .iter()
-                        .filter(|pointer| pointer.down)
-                        .map(|pointer| pointer.id)
-                        .collect();
                     self.notes[note_idx].hold_active = true;
                     self.notes[note_idx].consumed = false;
                     self.remove_from_queues(note_idx);
@@ -467,6 +469,12 @@ impl PlaySession {
                     Some((input_x, input_y)),
                 );
             }
+        }
+
+        // All holds whose head was hit this frame share the inputs that hit
+        // notes this frame. Later frames never extend the list.
+        for idx in holds_judged {
+            self.hold_bindings[idx] = frame_hit_ids.clone();
         }
     }
 
@@ -573,8 +581,10 @@ impl PlaySession {
             }
             let end = note.hold_end.unwrap_or(note.time);
             let held = !self.hold_bindings[idx].is_empty();
-            let in_riz = note.in_challenge && challenge_on;
-            // 原作 CheckHold：松手容差 = 1.6 × (Riztime ? normalPerfect : judgeTime)。
+            // 原作 CheckHold 的尾判只看音符自身的 inChallengeTime，不看尾判
+            // 发生时挑战是否仍然激活。
+            let in_riz = note.in_challenge;
+            // 原作 CheckHold：松手容差 = 1.6 × (inChallengeTime ? normalPerfect : judgeTime)。
             let tol = if in_riz {
                 self.windows.normal_perfect * 1.6
             } else {
@@ -602,7 +612,7 @@ impl PlaySession {
             self.notes[idx].hold_early = true;
         }
         for idx in missed {
-            let challenge = self.notes[idx].in_challenge && challenge_on;
+            let challenge = self.notes[idx].in_challenge;
             let kind = if challenge {
                 JudgeKind::ChallengeMiss
             } else {
