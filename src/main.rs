@@ -759,6 +759,9 @@ fn white_alpha(alpha: f32) -> macroquad::prelude::Color {
 
 // 原作 miss 走池化 prefab 的消失动画；这里用整体淡出等价还原。
 const NOTE_MISS_FADE: f64 = 0.25;
+// 原作 prefab 的断条 TweenInfo duration 是 1.0s，实际观感偏慢；
+// 这里缩到 0.5s（其余曲线/缩放目标保持不变）。
+const HOLD_BREAK_FADE: f64 = 0.5;
 
 fn note_fade(note: &chart::Note, time: f64) -> f32 {
     if note.missed_at <= 0.0 {
@@ -1299,16 +1302,16 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
     for line in &chart.lines {
         for note in &line.notes {
             // 原作断条（EasyPoolChild trigger 0 → EventTrigger → TweenInfo）：
-            // 头/身体/线在 1.0s 内 OutSine 淡出，头/身体同时缩到 0.62，完成后
-            // ReturnToPool。长条几何在断条瞬间冻结（HoldControl 已把它移出
-            // runningHoldNotes），所以下面用 missed_at 作为几何时间。
+            // 头/身体/线在 HOLD_BREAK_FADE 内 OutSine 淡出，头/身体同时缩到
+            // 0.62，完成后 ReturnToPool。长条几何在断条瞬间冻结（HoldControl
+            // 已把它移出 runningHoldNotes），所以下面用 missed_at 作为几何时间。
             let break_elapsed = if note.note_type == 2 && note.missed_at > 0.0 {
                 Some(time - note.missed_at)
             } else {
                 None
             };
             if let Some(elapsed) = break_elapsed {
-                if elapsed >= 1.0 {
+                if elapsed >= HOLD_BREAK_FADE {
                     continue;
                 }
             }
@@ -1372,10 +1375,10 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                         let hold_end_fp = infos[2];
                         let hold_end_secs = chart.tick_to_seconds(hold_end_time);
                         // 断条时几何冻结在 missed_at；正常时用当前时间。
-                        // TweenInfo: 1.0s OutSine，alpha 1→0，Scale 1→0.62。
+                        // TweenInfo: OutSine，alpha 1→0，Scale 1→0.62。
                         let (geom_time, hold_alpha, hold_scale) = match break_elapsed {
                             Some(elapsed) => {
-                                let p = (elapsed / 1.0).clamp(0.0, 1.0);
+                                let p = (elapsed / HOLD_BREAK_FADE).clamp(0.0, 1.0);
                                 let s = (p * PI / 2.0).sin();
                                 (note.missed_at, (1.0 - s) as f32, (1.0 - 0.38 * s) as f32)
                             }
