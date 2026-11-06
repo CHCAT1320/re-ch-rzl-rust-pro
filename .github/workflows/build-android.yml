@@ -24,11 +24,34 @@ jobs:
       - name: Subset font
         uses: ./.github/actions/subset-font
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK
+        run: |
+          set -eu
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
 
-      - name: Install NDK
-        run: sdkmanager --install "ndk;27.2.12479018"
+          # GitHub's Ubuntu images ship an NDK; do not download another one.
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+          if [ -z "$NDK" ] && [ -d "$SDK/ndk" ]; then
+            NDK=$(find "$SDK/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
+          fi
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            echo "::error::no Android NDK found under $SDK/ndk"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+
+          # Keep sdkmanager reachable in case cargo-apk2 shells out to it.
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n1 || true)
+          if [ -n "$SDKMANAGER" ]; then
+            echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          fi
+          echo "SDK: $SDK"
+          echo "NDK: $NDK"
 
       - name: Install cargo-apk2
         run: cargo install cargo-apk2 --locked
@@ -42,9 +65,6 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build APK
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
         run: cargo apk2 build --lib --release
 
       - name: Collect APK

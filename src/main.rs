@@ -2284,7 +2284,12 @@ async fn main() {
     };
 
     let backend = CpalBackend::new(cpal_settings());
-    let mut manager = AudioManager::new(backend).unwrap();
+    // Do not tear the audio backend down on exit. cpal's WASAPI Stream::drop
+    // joins its audio thread, and when the window is closed mid-play that join
+    // can panic ("threads should not terminate unexpectedly") and then abort in
+    // TLS cleanup. The process exits right after this function, so leaking the
+    // handles is harmless and avoids the racy shutdown path entirely.
+    let mut manager = std::mem::ManuallyDrop::new(AudioManager::new(backend).unwrap());
     let data = std::fs::read(&audio_path).unwrap();
     let clip = AudioClip::new(data).unwrap();
     let music_duration = clip.length();
@@ -2295,7 +2300,7 @@ async fn main() {
         ..Default::default()
     };
 
-    let mut music = manager.create_music(clip, params).unwrap();
+    let mut music = std::mem::ManuallyDrop::new(manager.create_music(clip, params).unwrap());
     let font = load_ttf_font_from_bytes(FONT_DATA).expect("invalid embedded font");
     set_default_font(font);
     let mut json_data = match std::fs::read(&json_path) {

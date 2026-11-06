@@ -18,7 +18,9 @@ jobs:
           fetch-depth: 2
 
       - name: Install dependencies
-        run: sudo apt-get install -y --no-install-recommends python3-pil
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check \
+            --user --break-system-packages pillow
 
       - name: Render diff PNG
         env:
