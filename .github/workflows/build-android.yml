@@ -10,6 +10,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Set this secret to sign CI APKs with a real release keystore.
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v5
 
@@ -56,13 +59,33 @@ jobs:
       - name: Install cargo-apk2
         run: cargo install cargo-apk2 --locked
 
-      - name: Create debug keystore
+      - name: Restore release keystore
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_PASSWORD is empty"
+            exit 1
+          fi
+          mkdir -p android
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/release.keystore
+          {
+            echo "CARGO_APK_RELEASE_KEYSTORE=$PWD/android/release.keystore"
+            echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "APK will be signed with android/release.keystore"
+
+      - name: Create debug keystore (fallback)
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
         run: |
           mkdir -p android
           keytool -genkeypair -keystore android/debug.keystore -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
             -dname "CN=Android Debug,O=Android,C=US"
+          echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; APK uses the debug keystore"
 
       - name: Build APK
         run: cargo apk2 build --lib --release

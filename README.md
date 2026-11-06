@@ -134,6 +134,22 @@ powershell -File scripts/build-apk.ps1 -Release
 keytool -genkeypair -keystore release.jks -alias release -keyalg RSA -keysize 2048 -validity 10000
 ```
 
+CI（GitHub Actions）正式签名：在仓库 `Settings → Secrets and variables → Actions` 添加
+
+- `ANDROID_KEYSTORE_BASE64`：keystore 文件的 base64
+- `ANDROID_KEYSTORE_PASSWORD`：keystore 密码
+
+未设置 `ANDROID_KEYSTORE_BASE64` 时自动回退到 `android/debug.keystore`。`cargo-apk2` 只接受一个密码，所以 keystore 密码和 key 密码需要相同，且 keystore 中只放一个 key。生成 base64：
+
+```text
+# PowerShell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.jks"))
+# Linux / macOS
+base64 -w0 release.jks
+```
+
+APK 使用 `cargo apk2 build --release`，`android:debuggable` 为 `false`。
+
 录制功能在移动端不可用（依赖 ffmpeg 子进程）。
 
 iOS 的 `.app` 只是一个文件夹（cargo 二进制 + `Info.plist`），所以 CI 直接产出 `.ipa`，不需要 Xcode 工程。但构建未签名，装到设备前需要用 AltStore / Sideloadly 之类重签。
