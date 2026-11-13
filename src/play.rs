@@ -3,9 +3,9 @@ use macroquad::prelude::*;
 use crate::chart::Chart;
 use crate::ease;
 use crate::{
-    calculate_combo, center_x, find_active_challenge_theme_index, find_canvas_move,
-    find_canmera_move, find_hit_theme_index, find_line_segment, play_hit_sound, scale_x,
-    HitEffect,
+    calculate_combo, camera_transform_point, canvas_transform_point, center_x,
+    find_active_challenge_theme_index, find_canvas_move, find_canmera_move, find_hit_theme_index,
+    find_line_segment, floor_y, play_hit_sound, scale_x, HitEffect,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::{render_h, render_w};
@@ -887,10 +887,10 @@ fn key_lane_x(index: usize, count: usize) -> f64 {
     t * render_w() as f64
 }
 
-fn note_screen_x(chart: &Chart, line_idx: usize, note_time: f64, time: f64) -> f64 {
+fn note_screen_point(chart: &Chart, line_idx: usize, note_time: f64, time: f64) -> (f64, f64) {
     let line = &chart.lines[line_idx];
     if line.line_points.is_empty() {
-        return center_x();
+        return (center_x(), floor_y());
     }
     let camera_pos = find_canmera_move(chart, time);
     let camera_x = camera_pos[0];
@@ -911,15 +911,32 @@ fn note_screen_x(chart: &Chart, line_idx: usize, note_time: f64, time: f64) -> f
         0.0
     };
     let ease_note = ease::EASE_FUNCS[lp.ease_type as usize](t_note);
-    lp_x + (next_lp_x - lp_x) * ease_note
+    let raw_x = lp_x + (next_lp_x - lp_x) * ease_note;
+    // 应用 canvas/camera 的 Y 偏移与旋转，使判定与画面上的音符位置一致。
+    camera_transform_point(
+        chart,
+        time,
+        canvas_transform_point(
+            chart,
+            time,
+            lp.canvas_index as i32,
+            camera_x,
+            camera_scale,
+            (raw_x, floor_y()),
+        ),
+    )
+}
+
+fn note_screen_x(chart: &Chart, line_idx: usize, note_time: f64, time: f64) -> f64 {
+    note_screen_point(chart, line_idx, note_time, time).0
 }
 
 // 音符的实际屏幕位置：音符时间之前 x 由自身时间所在的线段决定；
 // 时间已过则和 draw_notes 一样改用“当前时间”所在的线段（音符沿判定线滑动）。
 // 打击特效必须用当前位置，否则线的位置一变（长条尾判、晚 Miss）就会画偏。
-fn note_effect_x(chart: &Chart, line_idx: usize, note_time: f64, time: f64) -> f64 {
+fn note_effect_point(chart: &Chart, line_idx: usize, note_time: f64, time: f64) -> (f64, f64) {
     let pos_time = if time > note_time { time } else { note_time };
-    note_screen_x(chart, line_idx, pos_time, time)
+    note_screen_point(chart, line_idx, pos_time, time)
 }
 
 fn spawn_hit_effect(
@@ -929,9 +946,9 @@ fn spawn_hit_effect(
     time: f64,
     hits: &mut Vec<HitEffect>,
 ) {
-    let x = note_effect_x(chart, line_idx, note_time, time);
+    let (x, y) = note_effect_point(chart, line_idx, note_time, time);
     let theme_idx = find_hit_theme_index(chart, time);
-    hits.push(HitEffect::new(x, time, theme_idx.is_some()));
+    hits.push(HitEffect::new_at(x, y, time, theme_idx.is_some()));
 }
 
 fn spawn_fail_effect(
@@ -943,14 +960,11 @@ fn spawn_fail_effect(
     fx_pos: Option<(f64, f64)>,
     hits: &mut Vec<HitEffect>,
 ) {
-    let x = fx_pos
-        .map(|(x, _)| x)
-        .unwrap_or_else(|| note_effect_x(chart, line_idx, note_time, time));
+    let (x, y) = fx_pos.unwrap_or_else(|| note_effect_point(chart, line_idx, note_time, time));
     if kind == JudgeKind::Bad {
-        let y = fx_pos.map(|(_, y)| y).unwrap_or_else(|| crate::floor_y());
         hits.push(HitEffect::bad(x, y, time));
     } else {
-        hits.push(HitEffect::miss(x, time));
+        hits.push(HitEffect::miss_at(x, y, time));
         if let Some(line) = chart.lines.get_mut(line_idx) {
             line.miss_flash_until = time + 0.35;
         }

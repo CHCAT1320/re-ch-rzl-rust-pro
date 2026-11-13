@@ -212,6 +212,87 @@ fn draw_text(text: &str, x: f32, y: f32, font_size: f32, color: Color) {
     draw_text_outlined(text, x, y, font_size, color, BLACK, (font_size * 0.05).max(1.0));
 }
 
+// 以 (center_x, center_y) 为中心整体旋转绘制文本（用于 canvas 序号的旋转）。
+fn draw_text_centered_rotated(
+    text: &str,
+    center_x: f64,
+    center_y: f64,
+    font_size: f32,
+    fill: Color,
+    outline: Color,
+    thickness: f32,
+    rotation: f64,
+) {
+    if rotation == 0.0 {
+        let dim = measure_text(text, None, font_size as u16, 1.0);
+        draw_text_outlined(
+            text,
+            (center_x - dim.width as f64 / 2.0) as f32,
+            (center_y + dim.offset_y as f64 - dim.height as f64 / 2.0) as f32,
+            font_size,
+            fill,
+            outline,
+            thickness,
+        );
+        return;
+    }
+    let dim = measure_text(text, None, font_size as u16, 1.0);
+    let base_x = center_x - dim.width as f64 / 2.0;
+    let base_y = center_y + dim.offset_y as f64 - dim.height as f64 / 2.0;
+    let cos = rotation.cos();
+    let sin = rotation.sin();
+    let offset = thickness as f64;
+    let mut cursor = 0.0f64;
+    for ch in text.chars() {
+        let glyph = ch.to_string();
+        let glyph_dim = measure_text(&glyph, None, font_size as u16, 1.0);
+        let local_x = base_x + cursor;
+        let local_y = base_y;
+        let dx = local_x - center_x;
+        let dy = local_y - center_y;
+        let glyph_x = center_x + dx * cos - dy * sin;
+        let glyph_y = center_y + dx * sin + dy * cos;
+        for (ox, oy) in [
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (0.0, -1.0),
+            (0.0, 1.0),
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (-1.0, 1.0),
+            (1.0, 1.0),
+        ] {
+            let scaled_x = ox * offset;
+            let scaled_y = oy * offset;
+            let rotated_x = scaled_x * cos - scaled_y * sin;
+            let rotated_y = scaled_x * sin + scaled_y * cos;
+            draw_text_ex(
+                &glyph,
+                (glyph_x + rotated_x) as f32,
+                (glyph_y + rotated_y) as f32,
+                TextParams {
+                    font_size: font_size as u16,
+                    color: outline,
+                    rotation: rotation as f32,
+                    ..Default::default()
+                },
+            );
+        }
+        draw_text_ex(
+            &glyph,
+            glyph_x as f32,
+            glyph_y as f32,
+            TextParams {
+                font_size: font_size as u16,
+                color: fill,
+                rotation: rotation as f32,
+                ..Default::default()
+            },
+        );
+        cursor += glyph_dim.width as f64;
+    }
+}
+
 fn draw_combo(combo: i32) {
     if combo == 0 {
         return;
@@ -249,15 +330,19 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
     let line_height = dim.height as f64 + 10.0 * screen_radio_w();
 
     let move_count: usize = chart.canvas_moves.iter().map(|c| c.x_position_key_points.len()).sum();
+    let y_move_count: usize = chart.canvas_moves.iter().map(|c| c.y_position_key_points.len()).sum();
     let speed_count: usize = chart.canvas_moves.iter().map(|c| c.speed_key_points.len()).sum();
+    let rotation_count: usize = chart.canvas_moves.iter().map(|c| c.rotation_key_points.len()).sum();
     let point_count: usize = chart.lines.iter().map(|l| l.line_points.len()).sum();
     let note_count: usize = chart.lines.iter().map(|l| l.notes.len()).sum();
     let camera_pos = find_canmera_move(chart, time);
 
-    let lines: [String; 13] = [
+    let lines: [String; 17] = [
         format!("Canvas count: {}", chart.canvas_moves.len()),
         format!("Canvas move event count: {}", move_count),
+        format!("Canvas Y move event count: {}", y_move_count),
         format!("Canvas speed event count: {}", speed_count),
+        format!("Canvas rotation event count: {}", rotation_count),
         format!("Line count: {}", chart.lines.len()),
         format!("Point count: {}", point_count),
         format!("Note count: {}", note_count),
@@ -265,6 +350,8 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
         format!("Revelation scale: {}", revelation_size()),
         format!("Camera scale event count: {}", chart.camera_move.scale_key_points.len()),
         format!("Camera move event count: {}", chart.camera_move.x_position_key_points.len()),
+        format!("Camera Y move event count: {}", chart.camera_move.y_position_key_points.len()),
+        format!("Camera rotation event count: {}", chart.camera_move.rotation_key_points.len()),
         format!("Camera X: {}", camera_pos[0]),
         format!("Challange time count: {}", chart.challenge_times.len()),
         format!("Speed: {}", speed()),
@@ -324,14 +411,18 @@ fn rand_f64() -> f64 {
 
 // 加载谱面时对各类按时间排序的数据统一排序
 fn sort_chart(chart: &mut Chart) {
-    // 每个 canvas 的 x/speed 关键点按时间排序
+    // 每个 canvas 的 x/y/speed/rotation 关键点按时间排序
     for canvas in &mut chart.canvas_moves {
         canvas.x_position_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+        canvas.y_position_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
         canvas.speed_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+        canvas.rotation_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
     }
-    // camera 的 scale/x 关键点按时间排序
+    // camera 的 scale/x/y/rotation 关键点按时间排序
     chart.camera_move.scale_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
     chart.camera_move.x_position_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    chart.camera_move.y_position_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    chart.camera_move.rotation_key_points.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
     // bpm 变速点按时间排序
     chart.bpm_shifts.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
     // 每条线的 linePoints / notes 按时间排序
@@ -628,6 +719,94 @@ pub fn find_canmera_move(chart: &Chart, time: f64) -> [f64; 2] {
     [x, scale]
 }
 
+fn canvas_y_offset(chart: &Chart, time: f64, index: i32) -> f64 {
+    chart
+        .canvas_moves
+        .get(index as usize)
+        .map(|canvas| find_key_point_value(time, &canvas.y_position_key_points, chart))
+        .unwrap_or(0.0)
+}
+
+fn canvas_rotation(chart: &Chart, time: f64, index: i32) -> f64 {
+    chart
+        .canvas_moves
+        .get(index as usize)
+        .map(|canvas| find_key_point_value(time, &canvas.rotation_key_points, chart))
+        .unwrap_or(0.0)
+        * PI
+        / 180.0
+}
+
+fn camera_y_offset(chart: &Chart, time: f64) -> f64 {
+    find_key_point_value(time, &chart.camera_move.y_position_key_points, chart)
+}
+
+fn camera_rotation(chart: &Chart, time: f64) -> f64 {
+    find_key_point_value(time, &chart.camera_move.rotation_key_points, chart) * PI / 180.0
+}
+
+// 线点的世界屏幕坐标，未应用 canvas/camera 的 Y 偏移与旋转。
+pub fn raw_line_point_position(
+    chart: &Chart,
+    time: f64,
+    point: &chart::LinePoint,
+    camera_x: f64,
+    camera_scale: f64,
+) -> (f64, f64) {
+    let cvs_pos = find_canvas_move(chart, time, point.canvas_index);
+    let x = (point.x_position + cvs_pos[0] + camera_x) * 720.0 * camera_scale * scale_x()
+        + center_x();
+    let y = -(point.floor_position - cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0 * scale_y()
+        + floor_y();
+    (x, y)
+}
+
+// 以 canvas 自身位置为轴心应用 Y 偏移和旋转（对应编辑器的 canvasTransformPoint）。
+pub fn canvas_transform_point(
+    chart: &Chart,
+    time: f64,
+    index: i32,
+    camera_x: f64,
+    camera_scale: f64,
+    point: (f64, f64),
+) -> (f64, f64) {
+    let rotation = canvas_rotation(chart, time, index);
+    let offset_y = canvas_y_offset(chart, time, index) * 720.0 * camera_scale * scale_x();
+    if rotation == 0.0 && offset_y == 0.0 {
+        return point;
+    }
+    let cvs_pos = find_canvas_move(chart, time, index);
+    let pivot_x = (cvs_pos[0] + camera_x) * 720.0 * camera_scale * scale_x() + center_x();
+    let pivot_y = floor_y();
+    let dx = point.0 - pivot_x;
+    let dy = point.1 - pivot_y;
+    let cos = rotation.cos();
+    let sin = rotation.sin();
+    (
+        pivot_x + dx * cos - dy * sin,
+        pivot_y + dx * sin + dy * cos + offset_y,
+    )
+}
+
+// 以屏幕中心、判定线为轴心应用 camera Y 偏移和旋转（对应编辑器的 cameraTransformPoint）。
+pub fn camera_transform_point(chart: &Chart, time: f64, point: (f64, f64)) -> (f64, f64) {
+    let rotation = camera_rotation(chart, time);
+    let offset_y = camera_y_offset(chart, time) * 720.0 * scale_x();
+    if rotation == 0.0 && offset_y == 0.0 {
+        return point;
+    }
+    let pivot_x = center_x();
+    let pivot_y = floor_y();
+    let dx = point.0 - pivot_x;
+    let dy = point.1 - pivot_y;
+    let cos = rotation.cos();
+    let sin = rotation.sin();
+    (
+        pivot_x + dx * cos - dy * sin,
+        pivot_y + dx * sin + dy * cos + offset_y,
+    )
+}
+
 // 二分查找给定秒数所在的线段，返回 (line_point_idx, next_line_point_idx)
 // idx1 是时间 <= secs 的最大线点；idx2 是时间 > secs 的最小线点
 // 越界时退回到首/末线点（idx1 == idx2）
@@ -680,17 +859,17 @@ fn update_canvases_text(chart: &Chart, time: f64) {
         let canvas_pos = find_canvas_move(chart, time, i as i32);
         let x = (canvas_pos[0] + camera_x) * 720.0 * scale * scale_x() + center_x();
         let text = &format!("{}", i);
-        let dim = measure_text(text, None, font_size as u16, 1.0);
-        let tx = x - dim.width as f64 / 2.0;
-        let ty = ((count - 1 - i) as f64 + 0.5) * band + dim.offset_y as f64 - dim.height as f64 / 2.0;
-        draw_text_outlined(
+        let offset_y = canvas_y_offset(chart, time, i as i32) * 720.0 * scale * scale_x();
+        let center_y = ((count - 1 - i) as f64 + 0.5) * band + offset_y;
+        draw_text_centered_rotated(
             text,
-            tx as f32,
-            ty as f32,
+            x,
+            center_y,
             font_size as f32,
             BLACK,
             WHITE,
             (font_size as f32 * 0.05).max(1.0),
+            canvas_rotation(chart, time, i as i32),
         );
     }
 }
@@ -813,12 +992,42 @@ fn draw_lines(chart: &Chart, time: f64) {
     let camear_x = camera_pos[0];
     let camera_scale = camera_pos[1];
     let rev_scale = (scale_x() * 2.0) as f32;
+    let camera_rotation_value = camera_rotation(chart, time);
+    let camera_offset_y = camera_y_offset(chart, time) * 720.0 * scale_x();
+    let camera_cos = camera_rotation_value.cos();
+    let camera_sin = camera_rotation_value.sin();
+    let camera_pivot_x = center_x();
+    let camera_pivot_y = floor_y();
+    // 与制谱器一致：线先做 canvas 变换，再在 canvas 空间按 ease 插值，
+    // 最后才应用 camera 变换（等价于制谱器的 context 相机变换）。
+    let camera_point = |point: (f64, f64)| -> (f64, f64) {
+        if camera_rotation_value == 0.0 && camera_offset_y == 0.0 {
+            return point;
+        }
+        let dx = point.0 - camera_pivot_x;
+        let dy = point.1 - camera_pivot_y;
+        (
+            camera_pivot_x + dx * camera_cos - dy * camera_sin,
+            camera_pivot_y + dx * camera_sin + dy * camera_cos + camera_offset_y,
+        )
+    };
     for line in &chart.lines {
         let line_color = get_current_color(time, &line.line_color, chart);
         for (i, point) in line.line_points.iter().enumerate() {
             let cvs_pos = find_canvas_move(chart, time, point.canvas_index as i32);
-            let x = (point.x_position + cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
-            let y = (-(point.floor_position - cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y();
+            let raw_point = (
+                (point.x_position + cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x(),
+                (-(point.floor_position - cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y(),
+            );
+            let canvas_point = canvas_transform_point(
+                chart,
+                time,
+                point.canvas_index as i32,
+                camear_x,
+                camera_scale,
+                raw_point,
+            );
+            let (x, y) = camera_point(canvas_point);
             if revelation_size() < 1.0 {
                 draw_circle(x as f32, y as f32, 4.0, BLACK);
             }
@@ -844,8 +1053,19 @@ fn draw_lines(chart: &Chart, time: f64) {
                 if point.canvas_index != next_point.canvas_index {
                     next_point_cvs_pos = find_canvas_move(chart, time, next_point.canvas_index as i32); 
                 }
-                let next_x = (next_point.x_position + next_point_cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
-                let next_y = (-(next_point.floor_position - next_point_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y();
+                let next_raw_point = (
+                    (next_point.x_position + next_point_cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x(),
+                    (-(next_point.floor_position - next_point_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0) * scale_y() + floor_y(),
+                );
+                let next_canvas_point = canvas_transform_point(
+                    chart,
+                    time,
+                    next_point.canvas_index as i32,
+                    camear_x,
+                    camera_scale,
+                    next_raw_point,
+                );
+                let (next_x, next_y) = camera_point(next_canvas_point);
                 let mut next_point_result_color = match line_color {
                     Some(lc) => mix_color(&next_point.color, &lc),
                     None => next_point.color,
@@ -864,14 +1084,15 @@ fn draw_lines(chart: &Chart, time: f64) {
                 }
                 if !segment_intersects_screen((x, y), (next_x, next_y), screen_width, screen_height) {
                     continue;
-                } if x == next_x && y == next_y {
-                    draw_circle(x as f32, y as f32, 4.0 * rev_scale, chart_color_to_macroquad(&result_color));
+                }
+                // x 按 easeType 缓动插值，y 线性插值（在 canvas 空间采样）
+                let dx = next_canvas_point.0 - canvas_point.0;
+                let dy = next_canvas_point.1 - canvas_point.1;
+                let len_sq = dx * dx + dy * dy;
+                if len_sq <= 1e-12 {
+                    draw_circle(x as f32, y as f32, 2.0 * rev_scale, chart_color_to_macroquad(&result_color));
                     continue;
                 }
-                // x 按 easeType 缓动插值，y 线性插值；颜色按屏幕投影 t 取色
-                let dx = next_x - x;
-                let dy = next_y - y;
-                let len_sq = dx * dx + dy * dy;
                 let cap_radius = 2.0 * rev_scale;
                 let is_first_seg = i == 0;
                 let is_last_seg = i + 1 >= line.line_points.len();
@@ -882,22 +1103,27 @@ fn draw_lines(chart: &Chart, time: f64) {
                     let t1 = (j + 1) as f64 / 16.0;
                     let ease0 = ease::EASE_FUNCS[point.ease_type as usize](t0);
                     let ease1 = ease::EASE_FUNCS[point.ease_type as usize](t1);
-                    let p0_x = x + dx * ease0;
-                    let p0_y = y + dy * t0;
-                    let p1_x = x + dx * ease1;
-                    let p1_y = y + dy * t1;
-                    let color_t = if len_sq > 1e-12 {
-                        let mid_x = (p0_x + p1_x) * 0.5;
-                        let mid_y = (p0_y + p1_y) * 0.5;
-                        (((mid_x - x) * dx + (mid_y - y) * dy) / len_sq).clamp(0.0, 1.0)
-                    } else {
-                        0.5
+                    let sample0 = (
+                        canvas_point.0 + dx * ease0,
+                        canvas_point.1 + dy * t0,
+                    );
+                    let sample1 = (
+                        canvas_point.0 + dx * ease1,
+                        canvas_point.1 + dy * t1,
+                    );
+                    let color_t = {
+                        let mid_x = (sample0.0 + sample1.0) * 0.5;
+                        let mid_y = (sample0.1 + sample1.1) * 0.5;
+                        (((mid_x - canvas_point.0) * dx + (mid_y - canvas_point.1) * dy) / len_sq)
+                            .clamp(0.0, 1.0)
                     };
                     let r = (result_color.r as f64 + (next_point_result_color.r as f64 - result_color.r as f64) * color_t) as u8;
                     let g = (result_color.g as f64 + (next_point_result_color.g as f64 - result_color.g as f64) * color_t) as u8;
                     let b = (result_color.b as f64 + (next_point_result_color.b as f64 - result_color.b as f64) * color_t) as u8;
                     let a = (result_color.a as f64 + (next_point_result_color.a as f64 - result_color.a as f64) * color_t) as u8;
                     let color = macroquad::prelude::Color::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0);
+                    let (p0_x, p0_y) = camera_point(sample0);
+                    let (p1_x, p1_y) = camera_point(sample1);
                     draw_line(p0_x as f32, p0_y as f32, p1_x as f32, p1_y as f32, 3.0 * rev_scale, color);
                 }
                 // 圆头笔尖：仅在整条 line 的首/末段端点画圆，内部段边界由相邻段覆盖，消除段间重复 cap
@@ -925,6 +1151,9 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
             continue;
         }
         let color = get_current_color(time, &judge_ring_color, chart);
+        if line.line_points.is_empty() {
+            continue;
+        }
         // 二分查找找到最近的两个线点
         let mut left = 0isize;
         let mut right = line.line_points.len() as isize - 1;
@@ -943,28 +1172,43 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
         }
         let p0 = &line.line_points[idx1];
         let p1 = &line.line_points[idx2];
-        let p0_cvs_pos = find_canvas_move(chart, time, p0.canvas_index as i32);
-        let p1_cvs_pos = find_canvas_move(chart, time, p1.canvas_index as i32);
-        let p0_x = (p0.x_position + p0_cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
-        let p1_x = (p1.x_position + p1_cvs_pos[0] + camear_x) * 720.0 * camera_scale * scale_x() + center_x();
         let p0_time = chart.tick_to_seconds(p0.time);
         let p1_time = chart.tick_to_seconds(p1.time);
         if time < p0_time || time > p1_time {
             continue;
         }
-        // 按 y 坐标插值：求该段与判定线（floor_y）的交点参数 t，保证环贴合在判定线上的线
-        let design_floor = FLOOR_DESIGN_Y;
-        let y0 = -(p0.floor_position - p0_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0 + design_floor;
-        let y1 = -(p1.floor_position - p1_cvs_pos[1]) * camera_scale * speed_ratio() * 1280.0 + design_floor;
-        let t = if (y1 - y0).abs() > 1e-9 {
-            ((design_floor - y0) / (y1 - y0)).clamp(0.0, 1.0)
+        // 判定环与制谱器一致：先做 canvas 变换，再按 ease 插值，最后应用 camera 变换。
+        let start_raw = raw_line_point_position(chart, time, p0, camear_x, camera_scale);
+        let end_raw = raw_line_point_position(chart, time, p1, camear_x, camera_scale);
+        let start_pos = canvas_transform_point(
+            chart,
+            time,
+            p0.canvas_index as i32,
+            camear_x,
+            camera_scale,
+            start_raw,
+        );
+        let end_pos = canvas_transform_point(
+            chart,
+            time,
+            p1.canvas_index as i32,
+            camear_x,
+            camera_scale,
+            end_raw,
+        );
+        let ratio = if (p1_time - p0_time).abs() > 1e-12 {
+            (time - p0_time) / (p1_time - p0_time)
         } else {
-            0.5
+            0.0
         };
-        let ease0 = ease::EASE_FUNCS[p0.ease_type as usize](t);
-        let x = p0_x + (p1_x - p0_x) * ease0;
+        let ease_value = ease::EASE_FUNCS[p0.ease_type as usize](ratio);
+        let canvas_pos = (
+            start_pos.0 + (end_pos.0 - start_pos.0) * ease_value,
+            start_pos.1 + (end_pos.1 - start_pos.1) * ratio,
+        );
+        let (x, y) = camera_transform_point(chart, time, canvas_pos);
         if let Some(ref c) = color {
-            draw_circle_lines(x as f32, floor_y() as f32, 15.0 * cs, 3.0 * cs, chart_color_to_macroquad(c));
+            draw_circle_lines(x as f32, y as f32, 15.0 * cs, 3.0 * cs, chart_color_to_macroquad(c));
         }
     }
 }
@@ -999,12 +1243,20 @@ impl HitEffect {
         Self::with_kind(x, floor_y(), timer, 0.5, in_challenge, HitKind::Hit)
     }
 
+    pub fn new_at(x: f64, y: f64, timer: f64, in_challenge: bool) -> Self {
+        Self::with_kind(x, y, timer, 0.5, in_challenge, HitKind::Hit)
+    }
+
     pub fn bad(x: f64, y: f64, timer: f64) -> Self {
         Self::with_kind(x, y, timer, 0.5, false, HitKind::Bad)
     }
 
     pub fn miss(x: f64, timer: f64) -> Self {
-        let mut fx = Self::with_kind(x, floor_y(), timer, 0.85, false, HitKind::Miss);
+        Self::miss_at(x, floor_y(), timer)
+    }
+
+    pub fn miss_at(x: f64, y: f64, timer: f64) -> Self {
+        let mut fx = Self::with_kind(x, y, timer, 0.85, false, HitKind::Miss);
         let range = 180.0;
         let dead = 70.0;
         let mut speed = (rand_f64() * 2.0 - 1.0) * range;
@@ -1084,8 +1336,8 @@ pub fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
                 let (idx1, idx2) = find_line_segment(&line.line_points, note_time, chart);
                 let lp = &line.line_points[idx1];
                 let next_lp = &line.line_points[idx2];
-                let lp_cvs = find_canvas_move(chart, time, lp.canvas_index as i32);
-                let next_lp_cvs = find_canvas_move(chart, time, next_lp.canvas_index as i32);
+                let lp_cvs = find_canvas_move(chart, note_time, lp.canvas_index as i32);
+                let next_lp_cvs = find_canvas_move(chart, note_time, next_lp.canvas_index as i32);
                 let lp_time = chart.tick_to_seconds(lp.time);
                 let next_lp_time = chart.tick_to_seconds(next_lp.time);
                 let lp_x = (lp.x_position + lp_cvs[0] + camera_x) * 720.0 * camera_scale * scale_x() + center_x();
@@ -1096,15 +1348,30 @@ pub fn spawn_hit_effects(chart: &Chart, time: f64, hits: &mut Vec<HitEffect>) {
                     0.0
                 };
                 let ease_note = ease::EASE_FUNCS[lp.ease_type as usize](t_note);
-                let x = lp_x + (next_lp_x - lp_x) * ease_note;
-                hits.push(HitEffect::new(x, time, theme_idx.is_some()));
+                let raw = (
+                    lp_x + (next_lp_x - lp_x) * ease_note,
+                    -(note.floor_position - lp_cvs[1]) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y(),
+                );
+                let (x, y) = camera_transform_point(
+                    chart,
+                    time,
+                    canvas_transform_point(
+                        chart,
+                        note_time,
+                        lp.canvas_index as i32,
+                        camera_x,
+                        camera_scale,
+                        raw,
+                    ),
+                );
+                hits.push(HitEffect::new_at(x, y, time, theme_idx.is_some()));
             }
         }
     }
 }
 
 fn draw_hit_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
-    draw_hit_blocks_at(h, t, scale, color, floor_y());
+    draw_hit_blocks_at(h, t, scale, color, h.y);
 }
 
 fn draw_hit_blocks_at(h: &HitEffect, t: f64, scale: f64, color: chart::Color, origin_y: f64) {
@@ -1136,7 +1403,7 @@ fn draw_riz_blocks(h: &HitEffect, t: f64, scale: f64, color: chart::Color) {
     if h.r_b_offset.is_empty() {
         return;
     }
-    let judge_y = floor_y();
+    let judge_y = h.y;
     let ease11 = ease::EASE_FUNCS[11](t);
     let ease10 = ease::EASE_FUNCS[10](t);
     for i in 0..h.r_b_offset.len() {
@@ -1196,6 +1463,24 @@ fn draw_rotated_bar(cx: f64, cy: f64, angle: f64, half_w: f64, half_h: f64, colo
         vec2(pts[3].0, pts[3].1),
         color,
     );
+}
+
+// 沿 p0 -> p1 画一段带宽度的矩形（长条身体可随 canvas/camera 旋转）。
+fn draw_rotated_rectangle(p0: (f64, f64), p1: (f64, f64), half_width: f64, color: Color) {
+    let dx = p1.0 - p0.0;
+    let dy = p1.1 - p0.1;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 1e-9 || half_width <= 0.0 {
+        return;
+    }
+    let nx = -dy / len * half_width;
+    let ny = dx / len * half_width;
+    let a = ((p0.0 + nx) as f32, (p0.1 + ny) as f32);
+    let b = ((p1.0 + nx) as f32, (p1.1 + ny) as f32);
+    let c = ((p1.0 - nx) as f32, (p1.1 - ny) as f32);
+    let d = ((p0.0 - nx) as f32, (p0.1 - ny) as f32);
+    draw_triangle(vec2(a.0, a.1), vec2(b.0, b.1), vec2(c.0, c.1), color);
+    draw_triangle(vec2(a.0, a.1), vec2(c.0, c.1), vec2(d.0, d.1), color);
 }
 
 fn draw_cross_arm(cx: f64, cy: f64, angle: f64, inner: f64, outer: f64, radius: f64, color: Color) {
@@ -1350,23 +1635,30 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                 0.0
             };
             let ease_note = ease::EASE_FUNCS[note_lp.ease_type as usize](t_note);
-            let x_at_note = note_lp_x + (next_note_lp_x - note_lp_x) * ease_note;
-            // y 使用 note 所在线段的 startCanvas（与 JS 的 j.currentY 一致）
-            let y_at_note = -(note.floor_position - note_lp_cvs[1]) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y();
-            if y_at_note < 0.0 {
-                continue;
-            }
+            let note_canvas_index = note_lp.canvas_index as i32;
+            // 原始屏幕位置（未应用 canvas/camera 的 Y 偏移与旋转）
+            let head_raw = (
+                note_lp_x + (next_note_lp_x - note_lp_x) * ease_note,
+                -(note.floor_position - note_lp_cvs[1]) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y(),
+            );
+            let head = camera_transform_point(
+                chart,
+                time,
+                canvas_transform_point(chart, time, note_canvas_index, camera_x, camera_scale, head_raw),
+            );
 
             if note.note_type == 0 {
-                let x = x_at_note;
-                let y = y_at_note;
-                draw_circle(x as f32, y as f32, 10.0 * cs, chart_color_to_macroquad_alpha(&note_color, fade));
-                draw_circle_lines(x as f32, y as f32, 10.0 * cs, 6.0 * cs, black_alpha(fade));
+                if head.0 < -80.0 || head.0 > render_w() as f64 + 80.0 || head.1 < -80.0 || head.1 > render_h() as f64 + 80.0 {
+                    continue;
+                }
+                draw_circle(head.0 as f32, head.1 as f32, 10.0 * cs, chart_color_to_macroquad_alpha(&note_color, fade));
+                draw_circle_lines(head.0 as f32, head.1 as f32, 10.0 * cs, 6.0 * cs, black_alpha(fade));
             } else if note.note_type == 1 {
-                let x = x_at_note;
-                let y = y_at_note;
-                draw_circle(x as f32, y as f32, 9.0 * cs, white_alpha(fade));
-                draw_circle_lines(x as f32, y as f32, 9.0 * cs, 6.0 * cs, black_alpha(fade));
+                if head.0 < -80.0 || head.0 > render_w() as f64 + 80.0 || head.1 < -80.0 || head.1 > render_h() as f64 + 80.0 {
+                    continue;
+                }
+                draw_circle(head.0 as f32, head.1 as f32, 9.0 * cs, white_alpha(fade));
+                draw_circle_lines(head.0 as f32, head.1 as f32, 9.0 * cs, 6.0 * cs, black_alpha(fade));
             } else if note.note_type == 2 {
                 if let Some(ref infos) = note.other_informations {
                     if infos.len() >= 3 {
@@ -1407,42 +1699,71 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                         let ease_cur = ease::EASE_FUNCS[cur_lp.ease_type as usize](t_cur);
                         let x_at_cur = cur_lp_x + (next_cur_lp_x - cur_lp_x) * ease_cur;
                         // 时间已过 note 头：x 沿当前线段滑动，y 固定在判定线
-                        let (x, y) = if geom_time > note_time {
+                        let head_raw = if geom_time > note_time {
                             (x_at_cur, floor_y())
                         } else {
-                            (x_at_note, y_at_note)
+                            head_raw
                         };
-                        // 计算 hold 尾端的 y（取几何时刻 tail 所在 canvas 的位置）
+                        // 计算 hold 尾端的原始 y（取几何时刻 tail 所在 canvas 的位置）
                         let tail_cvs_pos = find_canvas_move(chart, geom_time, hold_end_canvas_index);
                         let tail_y_offset = hold_end_fp - tail_cvs_pos[1];
-                        let dy = -(tail_y_offset) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y();
+                        let tail_raw = (
+                            head_raw.0,
+                            -(tail_y_offset) * camera_scale * speed_ratio() * 1280.0 * scale_y() + floor_y(),
+                        );
+                        let head = camera_transform_point(
+                            chart,
+                            time,
+                            canvas_transform_point(chart, geom_time, note_canvas_index, camera_x, camera_scale, head_raw),
+                        );
+                        let tail = camera_transform_point(
+                            chart,
+                            time,
+                            canvas_transform_point(chart, geom_time, note_canvas_index, camera_x, camera_scale, tail_raw),
+                        );
+                        let margin = 80.0;
+                        if head.0.min(tail.0) > render_w() as f64 + margin
+                            || head.0.max(tail.0) < -margin
+                            || head.1.min(tail.1) > render_h() as f64 + margin
+                            || head.1.max(tail.1) < -margin
+                        {
+                            continue;
+                        }
                         let color_mq = chart_color_to_macroquad_alpha(&note_color, hold_alpha);
                         // 正常打完：身体 0.25s InQuad Scale→0（TweenInfo 154）。
                         if geom_time > hold_end_secs && break_elapsed.is_none() {
                             let dt = (geom_time - hold_end_secs) / 0.25;
                             let progress = (1.0 - dt * dt).max(0.0) as f32;
-                            draw_circle_lines(x as f32, y as f32, 10.0 * progress * cs, 3.0 * cs, black_alpha(hold_alpha));
-                            draw_circle(x as f32, y as f32, 8.0 * progress * cs, white_alpha(hold_alpha));
-                            draw_circle_lines(x as f32, y as f32, 8.0 * progress * cs, 3.0 * cs, black_alpha(hold_alpha));
+                            draw_circle_lines(head.0 as f32, head.1 as f32, 10.0 * progress * cs, 3.0 * cs, black_alpha(hold_alpha));
+                            draw_circle(head.0 as f32, head.1 as f32, 8.0 * progress * cs, white_alpha(hold_alpha));
+                            draw_circle_lines(head.0 as f32, head.1 as f32, 8.0 * progress * cs, 3.0 * cs, black_alpha(hold_alpha));
                             continue;
                         }
                         // 头部外圈（断条时随身体缩到 0.62）
-                        draw_circle_lines(x as f32, y as f32, 10.0 * cs * hold_scale, 3.0 * cs, black_alpha(hold_alpha));
-                        // hold 尾渐变矩形（自 y 向 dy：noteColor 在 0~36/63，之后渐变到透明白）
+                        draw_circle_lines(head.0 as f32, head.1 as f32, 10.0 * cs * hold_scale, 3.0 * cs, black_alpha(hold_alpha));
+                        // hold 尾渐变矩形（自头向尾：noteColor 在 0~36/63，之后渐变到透明白）
                         let hold_size = 10.0 * cs * hold_scale;
+                        let tail_scaled = (
+                            head.0 + (tail.0 - head.0) * hold_scale as f64,
+                            head.1 + (tail.1 - head.1) * hold_scale as f64,
+                        );
                         let segments = 24;
-                        let y_start = y as f32;
-                        let y_end = (y + (dy - y) * hold_scale as f64) as f32;
                         for i in 0..segments {
-                            let t0 = i as f32 / segments as f32;
-                            let t1 = (i + 1) as f32 / segments as f32;
-                            let rect_y0 = y_start + (y_end - y_start) * t0;
-                            let rect_y1 = y_start + (y_end - y_start) * t1;
+                            let t0 = i as f64 / segments as f64;
+                            let t1 = (i + 1) as f64 / segments as f64;
+                            let from = (
+                                head.0 + (tail_scaled.0 - head.0) * t0,
+                                head.1 + (tail_scaled.1 - head.1) * t0,
+                            );
+                            let to = (
+                                head.0 + (tail_scaled.0 - head.0) * t1,
+                                head.1 + (tail_scaled.1 - head.1) * t1,
+                            );
                             let mid_t = (t0 + t1) * 0.5;
                             let seg_color = if mid_t <= 36.0 / 63.0 {
                                 color_mq
                             } else {
-                                let gf = ((mid_t - 36.0 / 63.0) / (27.0 / 63.0)).clamp(0.0, 1.0);
+                                let gf = (((mid_t - 36.0 / 63.0) / (27.0 / 63.0)).clamp(0.0, 1.0)) as f32;
                                 macroquad::prelude::Color::new(
                                     color_mq.r + (1.0 - color_mq.r) * gf,
                                     color_mq.g + (1.0 - color_mq.g) * gf,
@@ -1450,18 +1771,35 @@ fn draw_notes(chart: &Chart, time: f64, note_color: chart::Color) {
                                     color_mq.a * (1.0 - gf),
                                 )
                             };
-                            let rect_y = rect_y0.min(rect_y1);
-                            let rect_h = (rect_y1 - rect_y0).abs();
-                            if rect_h > 0.0 {
-                                draw_rectangle(x as f32 - hold_size, rect_y, hold_size * 2.0, rect_h, seg_color);
-                            }
+                            draw_rotated_rectangle(from, to, hold_size as f64, seg_color);
                         }
                         // hold 尾两侧黑边
-                        draw_line(x as f32 - hold_size, y as f32, x as f32 - hold_size, y_end, 5.0 * cs, black_alpha(hold_alpha));
-                        draw_line(x as f32 + hold_size, y as f32, x as f32 + hold_size, y_end, 5.0 * cs, black_alpha(hold_alpha));
+                        let dx = tail_scaled.0 - head.0;
+                        let dy = tail_scaled.1 - head.1;
+                        let len = (dx * dx + dy * dy).sqrt();
+                        if len > 1e-9 {
+                            let nx = -dy / len * hold_size as f64;
+                            let ny = dx / len * hold_size as f64;
+                            draw_line(
+                                (head.0 + nx) as f32,
+                                (head.1 + ny) as f32,
+                                (tail_scaled.0 + nx) as f32,
+                                (tail_scaled.1 + ny) as f32,
+                                5.0 * cs,
+                                black_alpha(hold_alpha),
+                            );
+                            draw_line(
+                                (head.0 - nx) as f32,
+                                (head.1 - ny) as f32,
+                                (tail_scaled.0 - nx) as f32,
+                                (tail_scaled.1 - ny) as f32,
+                                5.0 * cs,
+                                black_alpha(hold_alpha),
+                            );
+                        }
                         // 头部内圈
-                        draw_circle(x as f32, y as f32, 10.0 * cs * hold_scale, white_alpha(hold_alpha));
-                        draw_circle_lines(x as f32, y as f32, 10.0 * cs * hold_scale, 8.0 * cs, black_alpha(hold_alpha));
+                        draw_circle(head.0 as f32, head.1 as f32, 10.0 * cs * hold_scale, white_alpha(hold_alpha));
+                        draw_circle_lines(head.0 as f32, head.1 as f32, 10.0 * cs * hold_scale, 8.0 * cs, black_alpha(hold_alpha));
                     }
                 }
             }

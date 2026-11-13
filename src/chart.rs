@@ -200,7 +200,11 @@ pub struct CanvasMove {
     #[serde(default)]
     pub index: i32,
     pub x_position_key_points: Vec<KeyPoint>,
+    #[serde(default)]
+    pub y_position_key_points: Vec<KeyPoint>,
     pub speed_key_points: Vec<KeyPoint>,
+    #[serde(default)]
+    pub rotation_key_points: Vec<KeyPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +212,10 @@ pub struct CanvasMove {
 pub struct CameraMove {
     pub scale_key_points: Vec<KeyPoint>,
     pub x_position_key_points: Vec<KeyPoint>,
+    #[serde(default)]
+    pub y_position_key_points: Vec<KeyPoint>,
+    #[serde(default)]
+    pub rotation_key_points: Vec<KeyPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,5 +252,34 @@ mod tests {
             serde_json::from_str(r#"{"xPositionKeyPoints":[],"speedKeyPoints":[]}"#).unwrap();
 
         assert_eq!(canvas.index, 0);
+        assert!(canvas.y_position_key_points.is_empty());
+        assert!(canvas.rotation_key_points.is_empty());
+    }
+
+    #[test]
+    fn canvas_and_camera_accept_y_and_rotation_events() {
+        let canvas: CanvasMove = serde_json::from_str(
+            r#"{
+                "xPositionKeyPoints": [],
+                "yPositionKeyPoints": [{"time":0,"value":0.5,"easeType":0,"floorPosition":0}],
+                "speedKeyPoints": [],
+                "rotationKeyPoints": [{"time":0,"value":45,"easeType":0,"floorPosition":0}]
+            }"#,
+        )
+        .unwrap();
+        let camera: super::CameraMove = serde_json::from_str(
+            r#"{
+                "scaleKeyPoints": [],
+                "xPositionKeyPoints": [],
+                "yPositionKeyPoints": [{"time":0,"value":-0.5,"easeType":0,"floorPosition":0}],
+                "rotationKeyPoints": [{"time":0,"value":-30,"easeType":0,"floorPosition":0}]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(canvas.y_position_key_points[0].value, 0.5);
+        assert_eq!(canvas.rotation_key_points[0].value, 45.0);
+        assert_eq!(camera.y_position_key_points[0].value, -0.5);
+        assert_eq!(camera.rotation_key_points[0].value, -30.0);
     }
 }
