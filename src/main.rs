@@ -321,13 +321,13 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
     if revelation_size() >= 1.0 {
         return;
     }
-    let font_size = 24.0 * screen_radio_w();
-    let x = 20.0 * screen_radio_w();
+    let font_size = 18.0 * screen_radio_w();
+    let x = 16.0 * screen_radio_w();
     let mut y = 60.0 * screen_radio_h();
 
     let sample = "Canvas count: 0";
     let dim = measure_text(sample, None, font_size as u16, 1.0);
-    let line_height = dim.height as f64 + 10.0 * screen_radio_w();
+    let line_height = dim.height as f64 + 5.0 * screen_radio_w();
 
     let move_count: usize = chart.canvas_moves.iter().map(|c| c.x_position_key_points.len()).sum();
     let y_move_count: usize = chart.canvas_moves.iter().map(|c| c.y_position_key_points.len()).sum();
@@ -336,8 +336,10 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
     let point_count: usize = chart.lines.iter().map(|l| l.line_points.len()).sum();
     let note_count: usize = chart.lines.iter().map(|l| l.notes.len()).sum();
     let camera_pos = find_canmera_move(chart, time);
+    let camera_y = camera_y_offset(chart, time);
+    let camera_deg = camera_rotation(chart, time) * 180.0 / PI;
 
-    let lines: [String; 17] = [
+    let lines: [String; 19] = [
         format!("Canvas count: {}", chart.canvas_moves.len()),
         format!("Canvas move event count: {}", move_count),
         format!("Canvas Y move event count: {}", y_move_count),
@@ -353,6 +355,8 @@ fn draw_revelation_info(chart: &Chart, time: f64) {
         format!("Camera Y move event count: {}", chart.camera_move.y_position_key_points.len()),
         format!("Camera rotation event count: {}", chart.camera_move.rotation_key_points.len()),
         format!("Camera X: {}", camera_pos[0]),
+        format!("Camera Y: {:.3}", camera_y),
+        format!("Camera rotation (deg): {:.1}", camera_deg),
         format!("Challange time count: {}", chart.challenge_times.len()),
         format!("Speed: {}", speed()),
     ];
