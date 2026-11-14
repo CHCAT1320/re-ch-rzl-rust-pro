@@ -1180,7 +1180,9 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
         if time < p0_time || time > p1_time {
             continue;
         }
-        // 判定环与制谱器一致：先做 canvas 变换，再按 ease 插值，最后应用 camera 变换。
+        // 判定环固定在（经过 canvas/camera 变换后的）判定线上：
+        // 先在 canvas 空间求线段与判定线 y = floor_y() 的交点，再应用 camera 变换。
+        // 这样没有 Y/旋转事件的旧谱面保持环不上下漂移，同时新事件仍会带动环。
         let start_raw = raw_line_point_position(chart, time, p0, camear_x, camera_scale);
         let end_raw = raw_line_point_position(chart, time, p1, camear_x, camera_scale);
         let start_pos = canvas_transform_point(
@@ -1199,15 +1201,16 @@ fn draw_judge_ring(chart: &Chart, time: f64) {
             camera_scale,
             end_raw,
         );
-        let ratio = if (p1_time - p0_time).abs() > 1e-12 {
-            (time - p0_time) / (p1_time - p0_time)
+        let floor = floor_y();
+        let floor_ratio = if (end_pos.1 - start_pos.1).abs() > 1e-9 {
+            ((floor - start_pos.1) / (end_pos.1 - start_pos.1)).clamp(0.0, 1.0)
         } else {
-            0.0
+            0.5
         };
-        let ease_value = ease::EASE_FUNCS[p0.ease_type as usize](ratio);
+        let ease_value = ease::EASE_FUNCS[p0.ease_type as usize](floor_ratio);
         let canvas_pos = (
             start_pos.0 + (end_pos.0 - start_pos.0) * ease_value,
-            start_pos.1 + (end_pos.1 - start_pos.1) * ratio,
+            floor,
         );
         let (x, y) = camera_transform_point(chart, time, canvas_pos);
         if let Some(ref c) = color {
