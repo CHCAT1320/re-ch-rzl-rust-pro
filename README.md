@@ -184,7 +184,7 @@ re-ch-rzl-rust-web-single.zip                web 单文件版（内含 re-ch-rzl
 推送到 `master` 会自动创建或更新一个滚动草稿，tag 取 `Cargo.toml` 里的版本号：
 
 ```text
-v0.1.4-draft
+v0.1.4
 ```
 
 改版本只需动 `Cargo.toml` 的 `[package] version`：画面水印里的版本号也取自这里（`env!("CARGO_PKG_VERSION")`），不会再和 Cargo.toml 对不上。

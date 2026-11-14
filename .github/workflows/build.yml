@@ -151,8 +151,7 @@ jobs:
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tag="${GITHUB_REF_NAME}"
           else
-            # `-draft` keeps the rolling draft from clashing with a real v$version tag.
-            tag="v${version}-draft"
+            tag="v${version}"
           fi
           echo "release tag: $tag"
           assets=(
