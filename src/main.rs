@@ -1093,13 +1093,13 @@ fn draw_lines(chart: &Chart, time: f64) {
                 let dx = next_canvas_point.0 - canvas_point.0;
                 let dy = next_canvas_point.1 - canvas_point.1;
                 let len_sq = dx * dx + dy * dy;
+                let line_width = 3.0 * rev_scale;
+                let cap_radius = line_width * 0.5;
                 if len_sq <= 1e-12 {
-                    draw_circle(x as f32, y as f32, 2.0 * rev_scale, chart_color_to_macroquad(&result_color));
+                    draw_circle(x as f32, y as f32, cap_radius, chart_color_to_macroquad(&result_color));
                     continue;
                 }
-                let cap_radius = 2.0 * rev_scale;
-                let is_first_seg = i == 0;
-                let is_last_seg = i + 1 >= line.line_points.len();
+                let is_last_seg = i + 2 == line.line_points.len();
                 let cap_start_color = chart_color_to_macroquad(&result_color);
                 let cap_end_color = chart_color_to_macroquad(&next_point_result_color);
                 for j in 0..16 {
@@ -1128,12 +1128,11 @@ fn draw_lines(chart: &Chart, time: f64) {
                     let color = macroquad::prelude::Color::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0);
                     let (p0_x, p0_y) = camera_point(sample0);
                     let (p1_x, p1_y) = camera_point(sample1);
-                    draw_line(p0_x as f32, p0_y as f32, p1_x as f32, p1_y as f32, 3.0 * rev_scale, color);
+                    draw_line(p0_x as f32, p0_y as f32, p1_x as f32, p1_y as f32, line_width, color);
                 }
-                // 圆头笔尖：仅在整条 line 的首/末段端点画圆，内部段边界由相邻段覆盖，消除段间重复 cap
-                if is_first_seg {
-                    draw_circle(x as f32, y as f32, cap_radius, cap_start_color);
-                }
+                // 与原作 lineCap = "round" 一致：每个线点补一个半径等于线宽一半的
+                // 圆头，相邻线段在转折处由此形成圆角；整条 line 的末端也补一个圆头。
+                draw_circle(x as f32, y as f32, cap_radius, cap_start_color);
                 if is_last_seg {
                     draw_circle(next_x as f32, next_y as f32, cap_radius, cap_end_color);
                 }
