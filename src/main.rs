@@ -1897,7 +1897,10 @@ impl HitSounds {
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
-    static HIT_SOUNDS: RefCell<Option<HitSounds>> = RefCell::new(HitSounds::new());
+    // 和主 AudioManager 一样泄漏到进程结束：关闭窗口时若在 TLS 清理阶段
+    // drop cpal/WASAPI 流，会 join 已停止的音频线程并 panic。
+    static HIT_SOUNDS: RefCell<Option<std::mem::ManuallyDrop<HitSounds>>> =
+        RefCell::new(HitSounds::new().map(std::mem::ManuallyDrop::new));
 }
 
 pub fn play_hit_sound(note_type: i32) {
